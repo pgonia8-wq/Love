@@ -322,11 +322,16 @@ CREATE TRIGGER on_ticket_purchased
 
 -- ============================================
 -- CRON JOBS (requires pg_cron extension)
--- Enable in Supabase: Database > Extensions > pg_cron
+-- To enable: Go to Supabase Dashboard > Database > Extensions > search "pg_cron" > Enable
+-- Then run this section separately AFTER enabling the extension.
 -- ============================================
 
--- Expire premium subscriptions
--- Run every hour
+-- Step 1: Enable pg_cron extension (must be done first)
+-- Uncomment the line below ONLY after enabling pg_cron in the Supabase Dashboard:
+-- CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA extensions;
+
+-- Step 2: After pg_cron is enabled, run these schedules in the SQL Editor:
+/*
 SELECT cron.schedule(
   'expire-premium-subscriptions',
   '0 * * * *',
@@ -344,8 +349,6 @@ SELECT cron.schedule(
   $$
 );
 
--- Expire profile boosts
--- Run every 5 minutes
 SELECT cron.schedule(
   'expire-profile-boosts',
   '*/5 * * * *',
@@ -357,8 +360,6 @@ SELECT cron.schedule(
   $$
 );
 
--- Clean up old passed swipes (older than 30 days) to save space
--- Run daily at 3 AM
 SELECT cron.schedule(
   'cleanup-old-swipes',
   '0 3 * * *',
@@ -369,8 +370,6 @@ SELECT cron.schedule(
   $$
 );
 
--- Deactivate events that have passed
--- Run every hour
 SELECT cron.schedule(
   'deactivate-past-events',
   '0 * * * *',
@@ -381,6 +380,7 @@ SELECT cron.schedule(
       AND event_date < NOW() - INTERVAL '1 day';
   $$
 );
+*/
 
 -- ============================================
 -- STORAGE BUCKET
