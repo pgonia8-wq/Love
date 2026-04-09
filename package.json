@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.102.1",
-    "@worldcoin/minikit-js": "^2.0.3"
+    "@worldcoin/minikit-js": "^2.0.3",
+    "viem": "^2.31.3"
   },
   "devDependencies": {
     "@hookform/resolvers": "^3.10.0",
