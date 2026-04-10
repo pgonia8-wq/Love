@@ -8,7 +8,7 @@ import { useState } from "react";
   } from "@worldcoin/minikit-js";
 
   interface LandingPageProps {
-    onVerified: (userId: string) => void;
+    onVerified: (userId: string, nullifierHash: string) => void;
   }
 
   export default function LandingPage({ onVerified }: LandingPageProps) {
@@ -23,14 +23,12 @@ import { useState } from "react";
       console.log("[Verify] MiniKit.isInstalled():", MiniKit.isInstalled());
 
       if (!MiniKit.isInstalled()) {
-        console.error("[Verify] MiniKit not installed");
         setError("Abre esta app dentro de World App");
         setIsPending(false);
         return;
       }
 
       try {
-        // Step 1: Get proof from MiniKit (same as Humans runVerification)
         console.log("[Verify] Calling MiniKit.commandsAsync.verify...");
         const verifyRes = await MiniKit.commandsAsync.verify({
           action: "verifica-que-eres-humano",
@@ -43,13 +41,11 @@ import { useState } from "react";
         if (!proof) throw new Error("No se recibió proof");
 
         if (proof.status === "error") {
-          console.error("[Verify] Error from World App:", JSON.stringify(proof));
           setError("Verificación cancelada o fallida");
           setIsPending(false);
           return;
         }
 
-        // Step 2: Send proof to backend (same as Humans)
         console.log("[Verify] Sending proof to /api/verify...");
         const res = await fetch("/api/verify", {
           method: "POST",
@@ -57,28 +53,17 @@ import { useState } from "react";
           body: JSON.stringify({ payload: proof }),
         });
 
-        if (!res.ok) {
-          const text = await res.text();
-          console.error("[Verify] Backend error:", text);
-          // Same as Humans: if already verified, use the nullifier_hash
-          if (text.includes("already") && proof.nullifier_hash) {
-            const id = proof.nullifier_hash;
-            localStorage.setItem("hlove_user_id", id);
-            onVerified(id);
-            return;
-          } else {
-            throw new Error("Error de verificación. Intenta de nuevo.");
-          }
-        }
-
         const backend = await res.json();
         console.log("[Verify] Backend response:", JSON.stringify(backend));
 
-        if (backend.success && (backend.nullifier_hash || proof.nullifier_hash)) {
-          const id = backend.nullifier_hash || proof.nullifier_hash;
-          localStorage.setItem("hlove_user_id", id);
-          onVerified(id);
-          console.log("[Verify] ✅ Verified! userId:", id.slice(0, 12) + "...");
+        if (backend.success && backend.user_id) {
+          localStorage.setItem("hlove_user_id", backend.user_id);
+          localStorage.setItem("hlove_nullifier", backend.nullifier_hash);
+          onVerified(backend.user_id, backend.nullifier_hash);
+          console.log("[Verify] ✅ Verified! UUID:", backend.user_id);
+        } else if (backend.success && proof.nullifier_hash) {
+          localStorage.setItem("hlove_nullifier", proof.nullifier_hash);
+          setError("Verificado pero no se obtuvo ID. Intenta de nuevo.");
         } else {
           throw new Error(backend.error || "Backend rechazó la prueba");
         }
