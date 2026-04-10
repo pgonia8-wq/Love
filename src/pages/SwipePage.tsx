@@ -34,6 +34,25 @@ import { useState, useCallback, useMemo, useEffect } from "react";
     const [maxDistance, setMaxDistance] = useState(() => parseInt(localStorage.getItem("hlove_max_dist") || "50"));
     const [ageRange, setAgeRange] = useState<[number,number]>([18, 45]);
     const [showTop5, setShowTop5] = useState(true);
+    const DAILY_LIMIT = isPremium ? 50 : 25;
+    const [dailySwipes, setDailySwipes] = useState(() => {
+      const stored = localStorage.getItem("hlove_daily_swipes");
+      if (stored) {
+        const { count, date } = JSON.parse(stored);
+        if (date === new Date().toISOString().split("T")[0]) return count;
+      }
+      return 0;
+    });
+    const [showDailyLimit, setShowDailyLimit] = useState(false);
+    const dailyRemaining = Math.max(0, DAILY_LIMIT - dailySwipes);
+    const dailyExhausted = dailyRemaining <= 0;
+
+    const trackDailySwipe = useCallback(() => {
+      const newCount = dailySwipes + 1;
+      setDailySwipes(newCount);
+      localStorage.setItem("hlove_daily_swipes", JSON.stringify({ count: newCount, date: new Date().toISOString().split("T")[0] }));
+      if (newCount >= DAILY_LIMIT) setShowDailyLimit(true);
+    }, [dailySwipes, DAILY_LIMIT]);
 
     useEffect(() => { if (position) updateUserLocation(userId); }, [position, userId]);
 
@@ -51,9 +70,10 @@ import { useState, useCallback, useMemo, useEffect } from "react";
 
     const doSwipe = useCallback(async (action: "like"|"pass"|"superlike") => {
       if (!cur || isProcessing) return;
+      if (dailyExhausted) { setShowDailyLimit(true); return; }
       if (locked && action !== "pass") { setShowGate(true); return; }
       setExitDir(action === "pass" ? "left" : action === "superlike" ? "up" : "right");
-      try { const res = await handleSwipe(cur.user_id, action); if (res?.matched) setShowMatch(cur); } catch {}
+      try { const res = await handleSwipe(cur.user_id, action); if (res?.matched) setShowMatch(cur); trackDailySwipe(); } catch {}
       setTimeout(() => { setCurrentIndex(p => p+1); setExitDir(null); setPhotoIdx(0); }, 400);
     }, [cur, handleSwipe, isProcessing, locked]);
 
@@ -97,6 +117,9 @@ import { useState, useCallback, useMemo, useEffect } from "react";
               <Navigation className="w-3 h-3 text-love-pink" /><span className="text-[10px] text-foreground/70">{position.city}</span>
             </div>
           )}
+          <div className={"flex items-center gap-1 rounded-full px-2.5 py-1 " + (dailyRemaining <= 5 ? "bg-red-500/10 border border-red-500/30" : "bg-muted/50 border border-border/30")}>
+            <span className={"text-[10px] font-semibold " + (dailyRemaining <= 5 ? "text-red-500" : "text-foreground/70")}>{dailyRemaining}/{DAILY_LIMIT}</span>
+          </div>
           <button onClick={() => setShowFilters(true)} className="ml-auto flex items-center gap-1 bg-muted/50 border border-border/30 rounded-full px-2.5 py-1">
             <SlidersHorizontal className="w-3 h-3 text-muted-foreground" /><span className="text-[10px]">{maxDistance}km</span>
           </button>
@@ -156,6 +179,32 @@ import { useState, useCallback, useMemo, useEffect } from "react";
                 </div>
                 <Button className="w-full h-12 gradient-love border-0 rounded-xl font-semibold text-base" onClick={() => { setShowGate(false); onUpgrade?.(); }}><Crown className="w-4 h-4 mr-2" />{t("premium.upgrade")}</Button>
                 <Button variant="ghost" className="w-full text-xs text-muted-foreground mt-2" onClick={() => setShowGate(false)}>{t("premium.maybeLater")}</Button>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Daily limit */}
+        <AnimatePresence>
+          {showDailyLimit && (
+            <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/80 backdrop-blur-xl px-6" onClick={() => setShowDailyLimit(false)}>
+              <motion.div initial={{scale:0.8,y:30}} animate={{scale:1,y:0}} exit={{scale:0.8}} onClick={e => e.stopPropagation()} className="bg-card rounded-3xl p-6 max-w-sm w-full shadow-2xl border border-border/50 text-center">
+                <div className="w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center mx-auto mb-4"><Clock className="w-8 h-8 text-red-400" /></div>
+                <h3 className="text-xl font-bold mb-2">{t("swipe.dailyLimitTitle")}</h3>
+                <p className="text-sm text-muted-foreground mb-2">{t("swipe.dailyLimitDesc", { limit: String(DAILY_LIMIT) })}</p>
+                <p className="text-xs text-muted-foreground mb-5">{t("swipe.dailyLimitReset")}</p>
+                {!isPremium && (
+                  <div className="bg-love-gold/5 border border-love-gold/20 rounded-xl p-3 mb-4">
+                    <p className="text-sm font-semibold text-love-gold mb-1">{t("swipe.wantMore")}</p>
+                    <p className="text-xs text-muted-foreground">{t("swipe.premiumGet50")}</p>
+                  </div>
+                )}
+                {!isPremium ? (
+                  <Button className="w-full h-12 gradient-love border-0 rounded-xl font-semibold" onClick={() => { setShowDailyLimit(false); onUpgrade?.(); }}><Crown className="w-4 h-4 mr-2" />{t("premium.upgrade")}</Button>
+                ) : (
+                  <Button variant="ghost" className="w-full" onClick={() => setShowDailyLimit(false)}>{t("swipe.comeBackTomorrow")}</Button>
+                )}
+                <Button variant="ghost" className="w-full text-xs text-muted-foreground mt-1" onClick={() => setShowDailyLimit(false)}>{t("common.close")}</Button>
               </motion.div>
             </motion.div>
           )}
