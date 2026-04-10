@@ -13,10 +13,11 @@ import { useState, useEffect, useRef } from "react";
 
   const queryClient = new QueryClient();
 
-  type Tab = "swipe" | "matches" | "chat" | "events" | "profile";
+  type Tab = "swipe" | "matches" | "events" | "profile";
 
   function AppContent() {
     const [userId, setUserId] = useState<string | null>(null);
+    const [nullifierHash, setNullifierHash] = useState<string | null>(null);
     const [userRecord, setUserRecord] = useState<UserType | null>(null);
     const [verified, setVerified] = useState(false);
     const [wallet, setWallet] = useState<string | null>(null);
@@ -25,27 +26,59 @@ import { useState, useEffect, useRef } from "react";
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState<Tab>("swipe");
     const [isPremium, setIsPremium] = useState(false);
+    const [miniKitReady, setMiniKitReady] = useState(false);
     const walletLoading = useRef(false);
 
     useEffect(() => {
       const init = async () => {
         console.log("[App] Init started");
+
+        try {
+          if (!MiniKit.isInstalled()) {
+            const waitForMiniKit = () =>
+              new Promise<boolean>((resolve) => {
+                let attempts = 0;
+                const interval = setInterval(() => {
+                  attempts++;
+                  if (MiniKit.isInstalled()) { clearInterval(interval); resolve(true); }
+                  else if (attempts > 20) { clearInterval(interval); resolve(false); }
+                }, 250);
+              });
+            await waitForMiniKit();
+          }
+          setMiniKitReady(MiniKit.isInstalled());
+
+          if (MiniKit.user) {
+            const u = MiniKit.user.username || null;
+            if (u) setUsername(u);
+            console.log("[App] MiniKit.user:", JSON.stringify({ username: MiniKit.user.username }));
+          }
+        } catch (e) {
+          console.warn("[App] MiniKit init error:", e);
+        }
+
         const storedId = localStorage.getItem("hlove_user_id");
+        const storedNullifier = localStorage.getItem("hlove_nullifier");
+        console.log("[App] stored userId:", storedId, "nullifier:", storedNullifier?.slice(0, 12));
 
         if (storedId) {
           try {
-            const checkRes = await fetch(`/api/verify?userId=${storedId}`);
+            const checkRes = await fetch(`/api/verify?userId=${storedNullifier || storedId}`);
             if (checkRes.ok) {
               const checkData = await checkRes.json();
               if (checkData.valid) {
-                setUserId(storedId);
+                setUserId(checkData.user_id || storedId);
+                setNullifierHash(storedNullifier || null);
                 setVerified(true);
-                await loadProfile(storedId);
+                await loadProfile(checkData.user_id || storedId);
+                console.log("[App] ✅ Session restored, UUID:", checkData.user_id || storedId);
               } else {
                 localStorage.removeItem("hlove_user_id");
+                localStorage.removeItem("hlove_nullifier");
               }
             } else {
               setUserId(storedId);
+              setNullifierHash(storedNullifier || null);
               setVerified(true);
               await loadProfile(storedId);
             }
@@ -67,7 +100,7 @@ import { useState, useEffect, useRef } from "react";
         const { data: userData } = await supabase
           .from("users")
           .select("*")
-          .eq("nullifier_hash", uid)
+          .eq("id", uid)
           .maybeSingle();
 
         if (userData) {
@@ -84,6 +117,8 @@ import { useState, useEffect, useRef } from "react";
         if (profileData) {
           setProfile(profileData);
           console.log("[App] Profile loaded:", profileData.display_name);
+        } else {
+          console.log("[App] No profile found, will show onboarding");
         }
       } catch (err) {
         console.warn("[App] Error loading profile:", err);
@@ -92,22 +127,17 @@ import { useState, useEffect, useRef } from "react";
 
     useEffect(() => {
       const loadWallet = async () => {
-        if (!verified || wallet || !MiniKit.isInstalled() || walletLoading.current) return;
+        if (!verified || wallet || !miniKitReady || walletLoading.current) return;
         walletLoading.current = true;
 
         try {
-          if (MiniKit.user) {
-            const u = MiniKit.user.username || null;
-            if (u) {
-              setUsername(u);
-              console.log("[App] Username from MiniKit:", u);
-            }
-          }
-
+          console.log("[App] Fetching /api/nonce...");
           const nonceRes = await fetch("/api/nonce");
           if (!nonceRes.ok) throw new Error("No nonce");
           const { nonce } = await nonceRes.json();
+          console.log("[App] Nonce:", nonce?.slice(0, 8) + "...");
 
+          console.log("[App] Calling walletAuth...");
           const auth = await MiniKit.commandsAsync.walletAuth({
             nonce,
             requestId: "wallet-auth-" + Date.now(),
@@ -121,18 +151,24 @@ import { useState, useEffect, useRef } from "react";
           if (payload?.status === "error") {
             console.warn("[App] WalletAuth error:", JSON.stringify(payload));
           } else if (payload?.address && payload?.message && payload?.signature) {
-            const vRes = await fetch("/api/walletVerify", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ payload, nonce, userId }),
-            });
-            const vData = await vRes.json();
-            if (vData.success) {
-              setWallet(vData.address);
+            console.log("[App] WalletAuth success:", payload.address.slice(0, 10) + "...");
+            try {
+              const vRes = await fetch("/api/walletVerify", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ payload, nonce, userId: nullifierHash }),
+              });
+              const vData = await vRes.json();
+              if (vData.success) {
+                setWallet(vData.address);
+                console.log("[App] ✅ Wallet set:", vData.address.slice(0, 10) + "...");
+              }
+            } catch (e) {
+              console.warn("[App] walletVerify error:", e);
             }
           }
 
-          const resolvedAddress = payload?.address || MiniKit.walletAddress;
+          const resolvedAddress = wallet || payload?.address || MiniKit.walletAddress;
           if (resolvedAddress && !username) {
             try {
               const wcRes = await fetch(`https://usernames.worldcoin.org/api/v1/${resolvedAddress}`);
@@ -140,9 +176,14 @@ import { useState, useEffect, useRef } from "react";
                 const wcData = await wcRes.json();
                 if (wcData.username) {
                   setUsername(wcData.username);
+                  console.log("[App] ✅ Username from Worldcoin:", wcData.username);
                 }
               }
             } catch (e) {}
+          }
+
+          if (!username && MiniKit.user?.username) {
+            setUsername(MiniKit.user.username);
           }
         } catch (err) {
           console.error("[App] Wallet error:", err);
@@ -152,16 +193,18 @@ import { useState, useEffect, useRef } from "react";
       };
 
       loadWallet();
-    }, [verified, wallet]);
+    }, [verified, wallet, miniKitReady]);
 
-    const handleVerified = async (id: string) => {
-      setUserId(id);
+    const handleVerified = async (uid: string, nullifier: string) => {
+      setUserId(uid);
+      setNullifierHash(nullifier);
       setVerified(true);
-      await loadProfile(id);
+      await loadProfile(uid);
     };
 
     const handleOnboardingComplete = (newProfile: Profile) => {
       setProfile(newProfile);
+      console.log("[App] ✅ Onboarding complete:", newProfile.display_name);
     };
 
     const handleProfileUpdate = async (updates: Partial<Profile>) => {
@@ -178,7 +221,9 @@ import { useState, useEffect, useRef } from "react";
 
     const handleLogout = () => {
       localStorage.removeItem("hlove_user_id");
+      localStorage.removeItem("hlove_nullifier");
       setUserId(null);
+      setNullifierHash(null);
       setVerified(false);
       setProfile(null);
       setWallet(null);
