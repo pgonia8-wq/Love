@@ -1,165 +1,223 @@
-import { useState, useEffect } from "react";
-  import { MiniKit } from "@worldcoin/minikit-js";
-  import { Heart, Calendar, User, Flame } from "lucide-react";
-  import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-  import { I18nProvider, LanguageSelector, useI18n } from "@/lib/i18n";
-  import { useGeolocation } from "@/hooks/useGeolocation";
-  import LandingPage from "@/pages/LandingPage";
-  import OnboardingPage from "@/pages/OnboardingPage";
-  import SwipePage from "@/pages/SwipePage";
-  import MatchesPage from "@/pages/MatchesPage";
-  import EventsPage from "@/pages/EventsPage";
-  import ProfilePage from "@/pages/ProfilePage";
-  import PremiumModal from "@/components/PremiumModal";
-  import { supabase } from "@/lib/supabase";
-  import type { Profile, User as UserType } from "@/types";
+import { useState, useEffect, useCallback } from "react";
+import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { AnimatePresence, motion } from "framer-motion";
+import { Heart, Users, Calendar, User, Crown } from "lucide-react";
+import { supabase } from "@/lib/supabase";
+import LandingPage from "@/pages/LandingPage";
+import OnboardingPage from "@/pages/OnboardingPage";
+import SwipePage from "@/pages/SwipePage";
+import MatchesPage from "@/pages/MatchesPage";
+import ChatPage from "@/pages/ChatPage";
+import EventsPage from "@/pages/EventsPage";
+import ProfilePage from "@/pages/ProfilePage";
+import WalletPage from "@/pages/WalletPage";
+import type { User as UserType, Profile } from "@/types";
 
-  const queryClient = new QueryClient();
-  type Tab = "swipe" | "matches" | "events" | "profile";
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30000,
+      retry: 1,
+    },
+  },
+});
 
-  function AppContent() {
-    const { t } = useI18n();
-    const { position, updateUserLocation } = useGeolocation();
-    const [walletAddress, setWalletAddress] = useState<string | null>(null);
-    const [username, setUsername] = useState<string | null>(null);
-    const [userRecord, setUserRecord] = useState<UserType | null>(null);
-    const [verified, setVerified] = useState(false);
-    const [profile, setProfile] = useState<Profile | null>(null);
-    const [loading, setLoading] = useState(true);
-    const [activeTab, setActiveTab] = useState<Tab>("swipe");
-    const [showPremium, setShowPremium] = useState(false);
+function NavBar() {
+  const [location, setLocation] = useLocation();
 
-    useEffect(() => {
-      const init = async () => {
-        try {
-          if (!MiniKit.isInstalled()) {
-            await new Promise<void>((resolve) => {
-              let attempts = 0;
-              const interval = setInterval(() => { attempts++; if (MiniKit.isInstalled() || attempts > 20) { clearInterval(interval); resolve(); } }, 250);
-            });
-          }
-        } catch (e) { console.warn("[App] MiniKit init:", e); }
+  const tabs = [
+    { path: "/", icon: Heart, label: "Discover" },
+    { path: "/matches", icon: Users, label: "Matches" },
+    { path: "/events", icon: Calendar, label: "Events" },
+    { path: "/wallet", icon: Crown, label: "Premium" },
+    { path: "/profile", icon: User, label: "Profile" },
+  ];
 
-        const storedWallet = localStorage.getItem("hlove_wallet");
-        if (storedWallet) {
-          setWalletAddress(storedWallet);
-          setUsername(localStorage.getItem("hlove_username") || null);
-          setVerified(true);
-          await loadUserAndProfile(storedWallet);
-        }
-        setLoading(false);
-      };
-      init();
-    }, []);
+  const activePath = location === "/" ? "/" : "/" + location.split("/")[1];
 
-    useEffect(() => {
-      if (walletAddress && position) {
-        updateUserLocation(walletAddress);
-        const interval = setInterval(() => updateUserLocation(walletAddress), 5 * 60 * 1000);
-        return () => clearInterval(interval);
-      }
-    }, [walletAddress, position]);
+  return (
+    <div className="flex items-center justify-around py-2 px-2 border-t border-border/30 bg-card/50 backdrop-blur-xl">
+      {tabs.map((tab) => {
+        const isActive = activePath === tab.path;
+        return (
+          <button
+            key={tab.path}
+            onClick={() => setLocation(tab.path)}
+            className="relative flex flex-col items-center gap-0.5 py-1.5 px-3"
+          >
+            {isActive && (
+              <motion.div
+                layoutId="nav-indicator"
+                className="absolute -top-0.5 w-8 h-0.5 gradient-love rounded-full"
+                transition={{ type: "spring", stiffness: 400, damping: 30 }}
+              />
+            )}
+            <tab.icon
+              className={`w-5 h-5 transition-colors ${
+                isActive ? "text-love-pink" : "text-muted-foreground"
+              }`}
+              fill={isActive && tab.icon === Heart ? "currentColor" : "none"}
+            />
+            <span
+              className={`text-[10px] transition-colors ${
+                isActive ? "text-love-pink font-medium" : "text-muted-foreground"
+              }`}
+            >
+              {tab.label}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
-    const loadUserAndProfile = async (wallet: string) => {
-      try {
-        const [{ data: userData }, { data: profileData }] = await Promise.all([
-          supabase.from("users").select("*").eq("wallet_address", wallet).maybeSingle(),
-          supabase.from("profiles").select("*").eq("user_id", wallet).maybeSingle(),
-        ]);
-        if (userData) setUserRecord(userData as UserType);
-        if (profileData) setProfile(profileData);
-      } catch (err) { console.warn("[App] Load error:", err); }
-    };
+function AppContent() {
+  const [user, setUser] = useState<UserType | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-    const handleVerified = async (wallet: string, nullifier: string, user: string | null) => {
-      setWalletAddress(wallet);
-      setUsername(user);
-      setVerified(true);
-      await loadUserAndProfile(wallet);
-    };
+  const [location] = useLocation();
 
-    const handleOnboardingComplete = (newProfile: Profile) => { setProfile(newProfile); };
+  const loadSession = useCallback(async (userId: string) => {
+    console.log("[App] Loading session for userId:", userId);
+    const { data: userData } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", userId)
+      .single();
 
-    const handleProfileUpdate = async (updates: Partial<Profile>) => {
-      if (!walletAddress) return;
-      const { data, error } = await supabase.from("profiles").update(updates).eq("user_id", walletAddress).select().single();
-      if (!error && data) setProfile(data);
-      return { data, error };
-    };
-
-    const handlePremiumPurchased = async () => {
-      if (!walletAddress) return;
-      await supabase.from("users").update({ is_premium: true, premium_expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), updated_at: new Date().toISOString() }).eq("wallet_address", walletAddress);
-      const { data } = await supabase.from("users").select("*").eq("wallet_address", walletAddress).single();
-      if (data) setUserRecord(data as UserType);
-      setShowPremium(false);
-    };
-
-    const handleLogout = () => {
-      localStorage.removeItem("hlove_wallet");
-      localStorage.removeItem("hlove_nullifier");
-      localStorage.removeItem("hlove_username");
-      setWalletAddress(null); setUsername(null); setVerified(false);
-      setProfile(null); setUserRecord(null);
-    };
-
-    if (loading) {
-      return (
-        <div className="min-h-screen flex items-center justify-center bg-background">
-          <div className="flex flex-col items-center gap-4">
-            <div className="w-16 h-16 rounded-2xl gradient-love flex items-center justify-center animate-pulse"><Heart className="w-8 h-8 text-white" fill="white" /></div>
-            <div className="w-8 h-8 border-2 border-love-pink/30 border-t-love-pink rounded-full animate-spin" />
-          </div>
-        </div>
-      );
+    if (!userData) {
+      console.log("[App] User not found, clearing session");
+      localStorage.removeItem("hlove_user_id");
+      setIsLoading(false);
+      return;
     }
 
-    if (!verified) return <LandingPage onVerified={handleVerified} />;
-    if (!profile && walletAddress) return <OnboardingPage userId={walletAddress} username={username} onComplete={handleOnboardingComplete} />;
-    if (!walletAddress || !profile) return null;
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("user_id", userId)
+      .single();
 
-    const isPremium = userRecord?.is_premium || false;
-    const tabs: { id: Tab; icon: typeof Heart; label: string }[] = [
-      { id: "swipe", icon: Flame, label: t("nav.discover") },
-      { id: "matches", icon: Heart, label: t("nav.matches") },
-      { id: "events", icon: Calendar, label: t("nav.events") },
-      { id: "profile", icon: User, label: t("nav.profile") },
-    ];
+    console.log("[App] Session loaded. user:", userData.id, "profile:", !!profileData);
+    setUser(userData);
+    setProfile(profileData);
+    setIsLoading(false);
+  }, []);
 
+  useEffect(() => {
+    const storedUserId = localStorage.getItem("hlove_user_id");
+    if (storedUserId) {
+      loadSession(storedUserId);
+    } else {
+      setIsLoading(false);
+    }
+  }, [loadSession]);
+
+  const handleVerified = (userId: string) => {
+    loadSession(userId);
+  };
+
+  const handleProfileUpdate = async (updates: Partial<Profile>) => {
+    if (!user) return;
+    const { data, error } = await supabase
+      .from("profiles")
+      .upsert(
+        { user_id: user.id, ...updates, updated_at: new Date().toISOString() },
+        { onConflict: "user_id" }
+      )
+      .select()
+      .single();
+    if (!error && data) setProfile(data);
+    return { data, error };
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("hlove_user_id");
+    setUser(null);
+    setProfile(null);
+  };
+
+  const showNav =
+    user && profile && !location.startsWith("/chat/") && !location.startsWith("/onboarding");
+
+  if (isLoading) {
     return (
-      <div className="min-h-screen flex flex-col bg-background">
-        <div className="absolute top-3 right-3 z-40"><LanguageSelector /></div>
-
-        <div className="flex-1 overflow-y-auto pb-20">
-          {activeTab === "swipe" && <SwipePage userId={walletAddress} isPremium={isPremium} onUpgrade={() => setShowPremium(true)} />}
-          {activeTab === "matches" && <MatchesPage userId={walletAddress} />}
-          {activeTab === "events" && <EventsPage userId={walletAddress} />}
-          {activeTab === "profile" && <ProfilePage user={userRecord!} profile={profile} onUpdate={handleProfileUpdate} onLogout={handleLogout} onUpgrade={() => setShowPremium(true)} />}
-        </div>
-
-        <PremiumModal open={showPremium} onClose={() => setShowPremium(false)} userId={walletAddress} onPurchased={handlePremiumPurchased} />
-
-        <nav className="fixed bottom-0 left-0 right-0 bg-card/95 backdrop-blur-lg border-t border-border/50 px-2 pb-safe z-50">
-          <div className="flex justify-around py-2">
-            {tabs.map((tab) => (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-all ${activeTab === tab.id ? "text-love-pink" : "text-muted-foreground hover:text-foreground/70"}`}>
-                <tab.icon className={`w-5 h-5 ${activeTab === tab.id ? "fill-love-pink/20" : ""}`} />
-                <span className="text-[10px] font-medium">{tab.label}</span>
-              </button>
-            ))}
+      <div className="min-h-screen flex items-center justify-center">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.8 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="flex flex-col items-center"
+        >
+          <div className="w-16 h-16 rounded-2xl gradient-love flex items-center justify-center mb-4 animate-pulse-glow">
+            <Heart className="w-8 h-8 text-white" fill="white" />
           </div>
-        </nav>
+          <div className="w-8 h-8 border-2 border-love-pink/30 border-t-love-pink rounded-full animate-spin" />
+        </motion.div>
       </div>
     );
   }
 
-  export default function App() {
+  if (!user) {
+    return <LandingPage onVerified={handleVerified} />;
+  }
+
+  if (!profile) {
     return (
-      <QueryClientProvider client={queryClient}>
-        <I18nProvider>
-          <AppContent />
-        </I18nProvider>
-      </QueryClientProvider>
+      <OnboardingPage
+        userId={user.id}
+        onComplete={() => window.location.reload()}
+      />
     );
   }
-  
+
+  return (
+    <div className="h-[100dvh] flex flex-col max-w-lg mx-auto overflow-hidden">
+      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        <Switch>
+          <Route path="/">
+            <SwipePage userId={user.id} isPremium={user.is_premium} />
+          </Route>
+          <Route path="/matches">
+            <MatchesPage userId={user.id} />
+          </Route>
+          <Route path="/chat/:matchId">
+            <ChatPage userId={user.id} />
+          </Route>
+          <Route path="/events">
+            <EventsPage userId={user.id} />
+          </Route>
+          <Route path="/wallet">
+            <WalletPage user={user} userId={user.id} />
+          </Route>
+          <Route path="/profile">
+            <ProfilePage
+              user={user}
+              profile={profile}
+              onUpdate={handleProfileUpdate}
+              onLogout={handleLogout}
+            />
+          </Route>
+          <Route>
+            <SwipePage userId={user.id} isPremium={user.is_premium} />
+          </Route>
+        </Switch>
+      </div>
+      {showNav && <NavBar />}
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+        <AppContent />
+      </WouterRouter>
+    </QueryClientProvider>
+  );
+}
+
+export default App;
