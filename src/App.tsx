@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import { Heart, Users, Calendar, User, Crown } from "lucide-react";
-import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/lib/supabase";
 import LandingPage from "@/pages/LandingPage";
 import OnboardingPage from "@/pages/OnboardingPage";
 import SwipePage from "@/pages/SwipePage";
@@ -12,6 +12,7 @@ import ChatPage from "@/pages/ChatPage";
 import EventsPage from "@/pages/EventsPage";
 import ProfilePage from "@/pages/ProfilePage";
 import WalletPage from "@/pages/WalletPage";
+import type { User as UserType, Profile } from "@/types";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -73,20 +74,74 @@ function NavBar() {
 }
 
 function AppContent() {
-  const {
-    user,
-    profile,
-    isLoading,
-    isVerified,
-    error,
-    verifyWithWorldId,
-    updateProfile,
-    logout,
-  } = useAuth();
+  const [user, setUser] = useState<UserType | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   const [location] = useLocation();
+
+  const loadSession = useCallback(async (userId: string) => {
+    console.log("[App] Loading session for userId:", userId);
+    const { data: userData } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", userId)
+      .single();
+
+    if (!userData) {
+      console.log("[App] User not found, clearing session");
+      localStorage.removeItem("hlove_user_id");
+      setIsLoading(false);
+      return;
+    }
+
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("user_id", userId)
+      .single();
+
+    console.log("[App] Session loaded. user:", userData.id, "profile:", !!profileData);
+    setUser(userData);
+    setProfile(profileData);
+    setIsLoading(false);
+  }, []);
+
+  useEffect(() => {
+    const storedUserId = localStorage.getItem("hlove_user_id");
+    if (storedUserId) {
+      loadSession(storedUserId);
+    } else {
+      setIsLoading(false);
+    }
+  }, [loadSession]);
+
+  const handleVerified = (userId: string) => {
+    loadSession(userId);
+  };
+
+  const handleProfileUpdate = async (updates: Partial<Profile>) => {
+    if (!user) return;
+    const { data, error } = await supabase
+      .from("profiles")
+      .upsert(
+        { user_id: user.id, ...updates, updated_at: new Date().toISOString() },
+        { onConflict: "user_id" }
+      )
+      .select()
+      .single();
+    if (!error && data) setProfile(data);
+    return { data, error };
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("hlove_user_id");
+    setUser(null);
+    setProfile(null);
+  };
+
   const showNav =
-    isVerified && profile && !location.startsWith("/chat/") && !location.startsWith("/onboarding");
+    user && profile && !location.startsWith("/chat/") && !location.startsWith("/onboarding");
 
   if (isLoading) {
     return (
@@ -105,14 +160,8 @@ function AppContent() {
     );
   }
 
-  if (!isVerified || !user) {
-    return (
-      <LandingPage
-        onVerify={verifyWithWorldId}
-        isLoading={isLoading}
-        error={error}
-      />
-    );
+  if (!user) {
+    return <LandingPage onVerified={handleVerified} />;
   }
 
   if (!profile) {
@@ -147,8 +196,8 @@ function AppContent() {
             <ProfilePage
               user={user}
               profile={profile}
-              onUpdate={updateProfile}
-              onLogout={logout}
+              onUpdate={handleProfileUpdate}
+              onLogout={handleLogout}
             />
           </Route>
           <Route>
