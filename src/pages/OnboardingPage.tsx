@@ -2,143 +2,202 @@ import { useState, useCallback } from "react";
   import { motion, AnimatePresence } from "framer-motion";
   import { Camera, ChevronRight, ChevronLeft, Check, MapPin } from "lucide-react";
   import { Button } from "@/components/ui/button";
-  import { Input } from "@/components/ui/input";
-  import { Textarea } from "@/components/ui/textarea";
-  import { INTEREST_OPTIONS, MIN_AGE, MAX_PHOTOS } from "@/lib/constants";
+  import { useI18n, LanguageSelector } from "@/lib/i18n";
   import { supabase } from "@/lib/supabase";
   import type { Profile } from "@/types";
 
   interface OnboardingPageProps {
     userId: string;
-    username?: string | null;
+    username: string | null;
     onComplete: (profile: Profile) => void;
   }
 
+  const INTEREST_OPTIONS = [
+    "Travel", "Music", "Fitness", "Photography", "Cooking", "Art",
+    "Reading", "Gaming", "Movies", "Dancing", "Yoga", "Hiking",
+    "Tech", "Fashion", "Coffee", "Wine", "Pets", "Nature",
+    "Sports", "Meditation", "Writing", "Volunteering", "Startups", "Design",
+  ];
+
   export default function OnboardingPage({ userId, username, onComplete }: OnboardingPageProps) {
-    const [step, setStep] = useState(0);
+    const { t } = useI18n();
+    const [step, setStep] = useState(1);
+    const [name, setName] = useState(username || "");
+    const [age, setAge] = useState("");
+    const [gender, setGender] = useState<"male"|"female"|"other">("male");
+    const [bio, setBio] = useState("");
+    const [interests, setInterests] = useState<string[]>([]);
+    const [photos, setPhotos] = useState<string[]>([]);
+    const [lookingFor, setLookingFor] = useState<"men"|"women"|"everyone">("everyone");
+    const [city, setCity] = useState("");
     const [saving, setSaving] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [form, setForm] = useState({
-      display_name: username || "",
-      bio: "",
-      age: "",
-      gender: "",
-      looking_for: "",
-      interests: [] as string[],
-      photos: [] as string[],
-      city: "",
-    });
+    const [error, setError] = useState<string|null>(null);
 
-    const totalSteps = 4;
-    const updateField = useCallback((field: string, value: any) => {
-      setForm((prev) => ({ ...prev, [field]: value }));
-    }, []);
+    const toggleInterest = (interest: string) => {
+      setInterests(prev => prev.includes(interest) ? prev.filter(i => i !== interest) : prev.length < 8 ? [...prev, interest] : prev);
+    };
 
-    const toggleInterest = useCallback((interest: string) => {
-      setForm((prev) => ({
-        ...prev,
-        interests: prev.interests.includes(interest)
-          ? prev.interests.filter((i) => i !== interest)
-          : prev.interests.length < 8 ? [...prev.interests, interest] : prev.interests,
-      }));
-    }, []);
+    const addPhoto = () => {
+      const url = prompt("Photo URL:");
+      if (url && url.startsWith("http") && photos.length < 6) setPhotos(prev => [...prev, url]);
+    };
 
-    const handlePhotoUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = e.target.files;
-      if (!files || form.photos.length >= MAX_PHOTOS) return;
-      for (const file of Array.from(files)) {
-        if (form.photos.length >= MAX_PHOTOS) break;
-        const ext = file.name.split(".").pop();
-        const path = "profiles/" + userId + "/" + Date.now() + "." + ext;
-        const { error: uploadErr } = await supabase.storage.from("photos").upload(path, file, { cacheControl: "3600", upsert: false });
-        if (!uploadErr) {
-          const { data } = supabase.storage.from("photos").getPublicUrl(path);
-          setForm((prev) => ({ ...prev, photos: [...prev.photos, data.publicUrl] }));
-        }
-      }
-    }, [userId, form.photos.length]);
+    const removePhoto = (idx: number) => setPhotos(prev => prev.filter((_, i) => i !== idx));
 
-    const removePhoto = useCallback((index: number) => {
-      setForm((prev) => ({ ...prev, photos: prev.photos.filter((_, i) => i !== index) }));
-    }, []);
-
-    const handleSave = async () => {
+    const handleComplete = useCallback(async () => {
+      if (!name.trim() || !age || parseInt(age) < 18) return;
       setSaving(true);
       setError(null);
+
       try {
-        console.log("[Onboarding] Saving for wallet:", userId.slice(0, 10));
-        const { data, error: saveError } = await supabase.from("profiles").upsert({
+        const profileData = {
           user_id: userId,
-          display_name: form.display_name,
-          bio: form.bio,
-          age: parseInt(form.age),
-          gender: form.gender,
-          looking_for: form.looking_for,
-          interests: form.interests,
-          photos: form.photos,
-          city: form.city,
+          display_name: name.trim(),
+          age: parseInt(age),
+          gender,
+          bio: bio.trim() || null,
+          interests,
+          photos: photos.length > 0 ? photos : ["https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=400&h=500&fit=crop"],
+          looking_for: lookingFor,
+          city: city.trim() || null,
           is_active: true,
           last_active_at: new Date().toISOString(),
-        }, { onConflict: "user_id" }).select().single();
-        if (saveError) { console.error("[Onboarding]", saveError.message); setError(saveError.message); return; }
-        if (data) { console.log("[Onboarding] Done:", data.display_name); onComplete(data); }
-      } catch (err) { console.error("[Onboarding]", err); setError("Error inesperado"); }
-      finally { setSaving(false); }
-    };
+        };
 
-    const canProceed = () => {
-      switch (step) {
-        case 0: return form.display_name.trim().length >= 2 && parseInt(form.age) >= MIN_AGE && form.gender !== "";
-        case 1: return form.bio.trim().length >= 10 && form.interests.length >= 3;
-        case 2: return form.photos.length >= 1;
-        case 3: return form.city.trim().length >= 2 && form.looking_for !== "";
-        default: return false;
+        const { data, error: dbError } = await supabase.from("profiles").upsert(profileData, { onConflict: "user_id" }).select().single();
+
+        if (dbError) {
+          console.error("[Onboarding] Error:", dbError);
+          setError(dbError.message);
+          setSaving(false);
+          return;
+        }
+
+        if (data) onComplete(data);
+      } catch (err) {
+        console.error("[Onboarding]", err);
+        setError(err instanceof Error ? err.message : t("onboarding.errorSaving"));
+        setSaving(false);
       }
-    };
+    }, [userId, name, age, gender, bio, interests, photos, lookingFor, city, onComplete]);
 
-    const stepTitles = ["Who are you?", "Tell us more", "Show yourself", "Preferences"];
-    const slides = [
-      <div key="basics" className="space-y-5">
-        <div><label className="text-sm font-medium text-foreground/70 mb-1.5 block">Display Name</label><Input value={form.display_name} onChange={(e) => updateField("display_name", e.target.value)} placeholder="How should people call you?" className="h-12 bg-card border-border/50 rounded-xl" maxLength={30} /></div>
-        <div><label className="text-sm font-medium text-foreground/70 mb-1.5 block">Age</label><Input type="number" value={form.age} onChange={(e) => updateField("age", e.target.value)} placeholder="Your age (18+)" min={MIN_AGE} max={99} className="h-12 bg-card border-border/50 rounded-xl" /></div>
-        <div><label className="text-sm font-medium text-foreground/70 mb-2 block">Gender</label>
-          <div className="grid grid-cols-3 gap-3">{["Male", "Female", "Other"].map((g) => (<button key={g} onClick={() => updateField("gender", g.toLowerCase())} className={`py-3 rounded-xl text-sm font-medium transition-all ${form.gender === g.toLowerCase() ? "gradient-love text-white shadow-md" : "bg-card text-foreground/70 border border-border/50"}`}>{g}</button>))}</div>
-        </div>
-      </div>,
-      <div key="about" className="space-y-5">
-        <div><label className="text-sm font-medium text-foreground/70 mb-1.5 block">About you</label><Textarea value={form.bio} onChange={(e) => updateField("bio", e.target.value)} placeholder="Tell people something interesting..." className="min-h-[120px] bg-card border-border/50 rounded-xl resize-none" maxLength={500} /><span className="text-xs text-muted-foreground mt-1 block">{form.bio.length}/500</span></div>
-        <div><label className="text-sm font-medium text-foreground/70 mb-2 block">Interests ({form.interests.length}/8)</label>
-          <div className="flex flex-wrap gap-2">{INTEREST_OPTIONS.map((interest) => (<button key={interest} onClick={() => toggleInterest(interest)} className={`px-3.5 py-1.5 rounded-full text-sm transition-all ${form.interests.includes(interest) ? "gradient-love text-white shadow-sm" : "bg-card text-foreground/60 border border-border/50"}`}>{interest}</button>))}</div>
-        </div>
-      </div>,
-      <div key="photos" className="space-y-5">
-        <p className="text-sm text-muted-foreground">Add up to {MAX_PHOTOS} photos. First = main picture.</p>
-        <div className="grid grid-cols-3 gap-3">
-          {form.photos.map((photo, i) => (<div key={i} className="relative aspect-[3/4] rounded-xl overflow-hidden group"><img src={photo} alt="" className="w-full h-full object-cover" /><button onClick={() => removePhoto(i)} className="absolute top-1.5 right-1.5 w-6 h-6 bg-black/60 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 text-white text-xs">X</button>{i === 0 && <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 p-2"><span className="text-[10px] text-white font-medium">Main</span></div>}</div>))}
-          {form.photos.length < MAX_PHOTOS && (<label className="aspect-[3/4] rounded-xl border-2 border-dashed border-border/50 flex flex-col items-center justify-center cursor-pointer hover:border-love-pink/40"><Camera className="w-6 h-6 text-muted-foreground mb-1" /><span className="text-xs text-muted-foreground">Add</span><input type="file" accept="image/*" multiple className="hidden" onChange={handlePhotoUpload} /></label>)}
-        </div>
-      </div>,
-      <div key="preferences" className="space-y-5">
-        <div><label className="text-sm font-medium text-foreground/70 mb-2 block">Looking for</label>
-          <div className="grid grid-cols-2 gap-3">{["Men", "Women", "Everyone", "Friends"].map((pref) => (<button key={pref} onClick={() => updateField("looking_for", pref.toLowerCase())} className={`py-3 rounded-xl text-sm font-medium transition-all ${form.looking_for === pref.toLowerCase() ? "gradient-love text-white shadow-md" : "bg-card text-foreground/70 border border-border/50"}`}>{pref}</button>))}</div>
-        </div>
-        <div><label className="text-sm font-medium text-foreground/70 mb-1.5 block"><MapPin className="w-4 h-4 inline mr-1" />City</label><Input value={form.city} onChange={(e) => updateField("city", e.target.value)} placeholder="Your city" className="h-12 bg-card border-border/50 rounded-xl" /></div>
-      </div>,
-    ];
+    const steps = [t("onboarding.step1"), t("onboarding.step2"), t("onboarding.step3"), t("onboarding.step4")];
 
     return (
-      <div className="min-h-screen flex flex-col px-6 py-8">
-        <div className="flex items-center gap-2 mb-2">{Array.from({ length: totalSteps }).map((_, i) => (<div key={i} className={`h-1 flex-1 rounded-full transition-all duration-500 ${i <= step ? "gradient-love" : "bg-muted"}`} />))}</div>
-        <div className="flex-1 flex flex-col">
-          <motion.h2 key={step} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="text-2xl font-bold mt-6 mb-6 gradient-love-text">{stepTitles[step]}</motion.h2>
-          <AnimatePresence mode="wait"><motion.div key={step} initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -30 }} transition={{ duration: 0.3 }} className="flex-1">{slides[step]}</motion.div></AnimatePresence>
-          <AnimatePresence>{error && <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="mt-2 text-sm text-destructive text-center">{error}</motion.p>}</AnimatePresence>
-          <div className="flex gap-3 mt-8 pb-4">
-            {step > 0 && <Button variant="outline" onClick={() => setStep((s) => s - 1)} className="flex-1 h-12 rounded-xl"><ChevronLeft className="w-4 h-4 mr-1" />Back</Button>}
-            <Button onClick={step === totalSteps - 1 ? handleSave : () => setStep((s) => s + 1)} disabled={!canProceed() || saving} className="flex-1 h-12 gradient-love border-0 rounded-xl font-semibold">
-              {saving ? <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }} className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full" /> : step === totalSteps - 1 ? <><Check className="w-4 h-4 mr-1" />Complete</> : <>Next<ChevronRight className="w-4 h-4 ml-1" /></>}
-            </Button>
+      <div className="min-h-screen bg-background flex flex-col">
+        <div className="absolute top-4 right-4 z-40"><LanguageSelector /></div>
+
+        <div className="px-6 pt-8 pb-4">
+          <div className="flex gap-1.5 mb-3">
+            {steps.map((_, i) => (<div key={i} className={"h-1 flex-1 rounded-full transition-all " + (i + 1 <= step ? "gradient-love" : "bg-muted")} />))}
           </div>
+          <p className="text-xs text-muted-foreground">{step}/4 — {steps[step - 1]}</p>
+        </div>
+
+        <div className="flex-1 px-6 py-4">
+          <AnimatePresence mode="wait">
+            {step === 1 && (
+              <motion.div key="s1" initial={{opacity:0,x:20}} animate={{opacity:1,x:0}} exit={{opacity:0,x:-20}} className="space-y-5">
+                <div>
+                  <label className="text-sm font-medium mb-1.5 block">{t("onboarding.displayName")}</label>
+                  <input value={name} onChange={e => setName(e.target.value)} placeholder={t("onboarding.displayNamePlaceholder")} className="w-full bg-card border border-border/50 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-love-pink/30" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1.5 block">{t("onboarding.age")}</label>
+                  <input type="number" value={age} onChange={e => setAge(e.target.value)} placeholder={t("onboarding.agePlaceholder")} min="18" max="99" className="w-full bg-card border border-border/50 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-love-pink/30" />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1.5 block">{t("onboarding.gender")}</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(["male","female","other"] as const).map(g => (
+                      <button key={g} onClick={() => setGender(g)} className={"py-3 rounded-xl text-sm font-medium transition-all border " + (gender === g ? "gradient-love text-white border-transparent" : "bg-card border-border/50")}>
+                        {t("onboarding." + g)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+            {step === 2 && (
+              <motion.div key="s2" initial={{opacity:0,x:20}} animate={{opacity:1,x:0}} exit={{opacity:0,x:-20}} className="space-y-5">
+                <div>
+                  <label className="text-sm font-medium mb-1.5 block">{t("onboarding.aboutYou")}</label>
+                  <textarea value={bio} onChange={e => setBio(e.target.value)} placeholder={t("onboarding.aboutPlaceholder")} maxLength={500} className="w-full bg-card border border-border/50 rounded-xl px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-love-pink/30 min-h-[100px] resize-none" />
+                  <p className="text-right text-[10px] text-muted-foreground mt-1">{bio.length}/500</p>
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-2 block">{t("onboarding.interests")} ({interests.length}/8)</label>
+                  <div className="flex flex-wrap gap-2">
+                    {INTEREST_OPTIONS.map(i => (
+                      <button key={i} onClick={() => toggleInterest(i)} className={"px-3 py-1.5 rounded-full text-xs font-medium transition-all border " + (interests.includes(i) ? "gradient-love text-white border-transparent" : "bg-card border-border/50 hover:border-love-pink/30")}>
+                        {i}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+            {step === 3 && (
+              <motion.div key="s3" initial={{opacity:0,x:20}} animate={{opacity:1,x:0}} exit={{opacity:0,x:-20}} className="space-y-4">
+                <p className="text-sm text-muted-foreground">{t("onboarding.addPhotos", { max: "6" })}</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {photos.map((photo, i) => (
+                    <div key={i} className="aspect-square rounded-xl overflow-hidden relative group">
+                      <img src={photo} alt="" className="w-full h-full object-cover" />
+                      <button onClick={() => removePhoto(i)} className="absolute top-1 right-1 w-5 h-5 rounded-full bg-destructive/80 text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition">×</button>
+                      {i === 0 && <span className="absolute bottom-1 left-1 text-[8px] bg-love-pink/80 text-white px-1.5 py-0.5 rounded-full">{t("onboarding.main")}</span>}
+                    </div>
+                  ))}
+                  {photos.length < 6 && (
+                    <button onClick={addPhoto} className="aspect-square rounded-xl border-2 border-dashed border-border/50 flex flex-col items-center justify-center gap-1 hover:border-love-pink/30 transition">
+                      <Camera className="w-6 h-6 text-muted-foreground" />
+                      <span className="text-[10px] text-muted-foreground">{t("onboarding.add")}</span>
+                    </button>
+                  )}
+                </div>
+              </motion.div>
+            )}
+            {step === 4 && (
+              <motion.div key="s4" initial={{opacity:0,x:20}} animate={{opacity:1,x:0}} exit={{opacity:0,x:-20}} className="space-y-5">
+                <div>
+                  <label className="text-sm font-medium mb-2 block">{t("onboarding.lookingFor")}</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {(["men","women","everyone"] as const).map(opt => (
+                      <button key={opt} onClick={() => setLookingFor(opt)} className={"py-3 rounded-xl text-sm font-medium transition-all border " + (lookingFor === opt ? "gradient-love text-white border-transparent" : "bg-card border-border/50")}>
+                        {t("onboarding." + opt)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1.5 block">{t("onboarding.city")}</label>
+                  <div className="relative">
+                    <MapPin className="absolute left-3 top-3.5 w-4 h-4 text-muted-foreground" />
+                    <input value={city} onChange={e => setCity(e.target.value)} placeholder={t("onboarding.cityPlaceholder")} className="w-full bg-card border border-border/50 rounded-xl pl-9 pr-4 py-3 text-sm outline-none focus:ring-2 focus:ring-love-pink/30" />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {error && <p className="px-6 text-sm text-destructive text-center mb-2">{error}</p>}
+
+        <div className="px-6 pb-8 flex gap-3">
+          {step > 1 && (
+            <Button variant="outline" onClick={() => setStep(s => s - 1)} className="flex-1 h-12 rounded-xl">
+              <ChevronLeft className="w-4 h-4 mr-1" />{t("onboarding.back")}
+            </Button>
+          )}
+          {step < 4 ? (
+            <Button onClick={() => setStep(s => s + 1)} disabled={step === 1 && (!name.trim() || !age || parseInt(age) < 18)} className="flex-1 h-12 gradient-love border-0 rounded-xl font-semibold">
+              {t("onboarding.next")}<ChevronRight className="w-4 h-4 ml-1" />
+            </Button>
+          ) : (
+            <Button onClick={handleComplete} disabled={saving} className="flex-1 h-12 gradient-love border-0 rounded-xl font-semibold">
+              {saving ? <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <><Check className="w-4 h-4 mr-1" />{t("onboarding.complete")}</>}
+            </Button>
+          )}
         </div>
       </div>
     );
