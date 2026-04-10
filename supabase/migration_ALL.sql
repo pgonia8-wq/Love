@@ -1,7 +1,6 @@
 -- ============================================
-  -- H LOVE - MASTER MIGRATION (FIXED)
+  -- H LOVE - MASTER MIGRATION (ALL FIXED)
   -- Run this single file in Supabase SQL Editor
-  -- Order: V0 (base) > V1 (geo) > V2 (trust) > V3 (fomo)
   -- Safe to run multiple times
   -- ============================================
 
@@ -446,12 +445,18 @@
   ALTER TABLE passport_history ENABLE ROW LEVEL SECURITY;
 
   -- Allow service role full access
-  CREATE POLICY "Service role full access blocks" ON blocks FOR ALL USING (true);
-  CREATE POLICY "Service role full access boosts" ON boosts FOR ALL USING (true);
-  CREATE POLICY "Service role full access notifications" ON notifications FOR ALL USING (true);
-  CREATE POLICY "Service role full access settings" ON user_settings FOR ALL USING (true);
-  CREATE POLICY "Service role full access location_history" ON user_location_history FOR ALL USING (true);
-  CREATE POLICY "Service role full access passport" ON passport_history FOR ALL USING (true);
+  DROP POLICY IF EXISTS "Service role full access blocks" ON blocks;
+CREATE POLICY "Service role full access blocks" ON blocks FOR ALL USING (true);
+  DROP POLICY IF EXISTS "Service role full access boosts" ON boosts;
+CREATE POLICY "Service role full access boosts" ON boosts FOR ALL USING (true);
+  DROP POLICY IF EXISTS "Service role full access notifications" ON notifications;
+CREATE POLICY "Service role full access notifications" ON notifications FOR ALL USING (true);
+  DROP POLICY IF EXISTS "Service role full access settings" ON user_settings;
+CREATE POLICY "Service role full access settings" ON user_settings FOR ALL USING (true);
+  DROP POLICY IF EXISTS "Service role full access location_history" ON user_location_history;
+CREATE POLICY "Service role full access location_history" ON user_location_history FOR ALL USING (true);
+  DROP POLICY IF EXISTS "Service role full access passport" ON passport_history;
+CREATE POLICY "Service role full access passport" ON passport_history FOR ALL USING (true);
 
   -- 12. Update mock profiles with geo data
   UPDATE profiles SET
@@ -780,8 +785,5 @@
   SELECT 'V3 Migration completed!' as status;
   
 
-  -- ============================================
-  -- VERIFY
-  -- ============================================
   SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name;
   
