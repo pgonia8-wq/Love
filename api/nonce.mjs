@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+  import { rateLimit } from "./_rateLimit.mjs";
   import { createClient } from "@supabase/supabase-js";
 
   const supabase = createClient(
@@ -14,6 +15,10 @@ import crypto from "node:crypto";
 
     if (req.method === "OPTIONS") return res.status(200).end();
     if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
+
+    if (rateLimit(req, { max: 30, windowMs: 60000 }).limited) {
+      return res.status(429).json({ error: "Demasiadas solicitudes. Intenta en un minuto." });
+    }
 
     try {
       const nonce = crypto.randomUUID().replace(/-/g, "");
