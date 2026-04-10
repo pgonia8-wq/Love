@@ -1,10 +1,7 @@
 -- ============================================
-  -- H LOVE - MASTER MIGRATION
+  -- H LOVE - MASTER MIGRATION (FIXED)
   -- Run this single file in Supabase SQL Editor
-  -- It includes ALL migrations in correct order
-  -- ============================================
-  -- Order: V0 (base) → V1 (geo) → V2 (trust) → V3 (fomo)
-  -- All statements use IF NOT EXISTS / IF EXISTS
+  -- Order: V0 (base) > V1 (geo) > V2 (trust) > V3 (fomo)
   -- Safe to run multiple times
   -- ============================================
 
@@ -185,16 +182,35 @@
   ALTER TABLE events ENABLE ROW LEVEL SECURITY;
   ALTER TABLE event_tickets ENABLE ROW LEVEL SECURITY;
 
-  CREATE POLICY IF NOT EXISTS "Full access users" ON users FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access profiles" ON profiles FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access swipes" ON swipes FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access matches" ON matches FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access messages" ON messages FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access payments" ON payments FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access subscriptions" ON subscriptions FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access reports" ON reports FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access events" ON events FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access event_tickets" ON event_tickets FOR ALL USING (true);
+  DROP POLICY IF EXISTS "Full access users" ON users;
+  CREATE POLICY "Full access users" ON users FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access profiles" ON profiles;
+  CREATE POLICY "Full access profiles" ON profiles FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access swipes" ON swipes;
+  CREATE POLICY "Full access swipes" ON swipes FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access matches" ON matches;
+  CREATE POLICY "Full access matches" ON matches FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access messages" ON messages;
+  CREATE POLICY "Full access messages" ON messages FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access payments" ON payments;
+  CREATE POLICY "Full access payments" ON payments FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access subscriptions" ON subscriptions;
+  CREATE POLICY "Full access subscriptions" ON subscriptions FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access reports" ON reports;
+  CREATE POLICY "Full access reports" ON reports FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access events" ON events;
+  CREATE POLICY "Full access events" ON events FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access event_tickets" ON event_tickets;
+  CREATE POLICY "Full access event_tickets" ON event_tickets FOR ALL USING (true);
 
   SELECT 'V0 Base Schema completed!' as status;
   
@@ -489,7 +505,7 @@
   
 
   -- ============================================
-  -- V2: TRUST FEATURES (Proof of Date, Trust Score, Vouched By)
+  -- V2: TRUST FEATURES
   -- ============================================
 
   -- ============================================
@@ -578,9 +594,16 @@
   ALTER TABLE trust_metrics ENABLE ROW LEVEL SECURITY;
   ALTER TABLE vouches ENABLE ROW LEVEL SECURITY;
 
+  DROP POLICY IF EXISTS "Full access date_confirmations" ON date_confirmations;
   CREATE POLICY "Full access date_confirmations" ON date_confirmations FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access trust_reviews" ON trust_reviews;
   CREATE POLICY "Full access trust_reviews" ON trust_reviews FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access trust_metrics" ON trust_metrics;
   CREATE POLICY "Full access trust_metrics" ON trust_metrics FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access vouches" ON vouches;
   CREATE POLICY "Full access vouches" ON vouches FOR ALL USING (true);
 
   -- Trust score calculation function
@@ -626,7 +649,7 @@
   
 
   -- ============================================
-  -- V3: FOMO FEATURES (Spotlight, Crush, Top5, Icebreaker, Social Proof)
+  -- V3: FOMO FEATURES
   -- ============================================
 
   -- ============================================
@@ -711,9 +734,16 @@
   ALTER TABLE icebreakers ENABLE ROW LEVEL SECURITY;
   ALTER TABLE spotlight_sessions ENABLE ROW LEVEL SECURITY;
 
+  DROP POLICY IF EXISTS "Full access crushes" ON crushes;
   CREATE POLICY "Full access crushes" ON crushes FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access weekly_top5" ON weekly_top5;
   CREATE POLICY "Full access weekly_top5" ON weekly_top5 FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access icebreakers" ON icebreakers;
   CREATE POLICY "Full access icebreakers" ON icebreakers FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access spotlight" ON spotlight_sessions;
   CREATE POLICY "Full access spotlight" ON spotlight_sessions FOR ALL USING (true);
 
   -- Generate social proof for mock profiles
@@ -751,12 +781,7 @@
   
 
   -- ============================================
-  -- FINAL: Verify all tables exist
+  -- VERIFY
   -- ============================================
-  SELECT 'ALL MIGRATIONS COMPLETE!' as status;
-
-  SELECT table_name 
-  FROM information_schema.tables 
-  WHERE table_schema = 'public' 
-  ORDER BY table_name;
+  SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name;
   
