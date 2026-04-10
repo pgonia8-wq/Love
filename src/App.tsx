@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
   import { MiniKit } from "@worldcoin/minikit-js";
-  import { Heart, MessageCircle, Calendar, User, Flame } from "lucide-react";
+  import { Heart, Calendar, User, Flame } from "lucide-react";
   import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
   import LandingPage from "@/pages/LandingPage";
   import OnboardingPage from "@/pages/OnboardingPage";
@@ -16,76 +16,77 @@ import { useState, useEffect, useRef } from "react";
   type Tab = "swipe" | "matches" | "events" | "profile";
 
   function AppContent() {
-    const [userId, setUserId] = useState<string | null>(null);
-    const [nullifierHash, setNullifierHash] = useState<string | null>(null);
+    const [walletAddress, setWalletAddress] = useState<string | null>(null);
+    const [username, setUsername] = useState<string | null>(null);
     const [userRecord, setUserRecord] = useState<UserType | null>(null);
     const [verified, setVerified] = useState(false);
-    const [wallet, setWallet] = useState<string | null>(null);
-    const [username, setUsername] = useState<string | null>(null);
     const [profile, setProfile] = useState<Profile | null>(null);
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState<Tab>("swipe");
-    const [isPremium, setIsPremium] = useState(false);
-    const [miniKitReady, setMiniKitReady] = useState(false);
-    const walletLoading = useRef(false);
 
     useEffect(() => {
       const init = async () => {
         console.log("[App] Init started");
 
+        // Wait for MiniKit
         try {
           if (!MiniKit.isInstalled()) {
-            const waitForMiniKit = () =>
-              new Promise<boolean>((resolve) => {
-                let attempts = 0;
-                const interval = setInterval(() => {
-                  attempts++;
-                  if (MiniKit.isInstalled()) { clearInterval(interval); resolve(true); }
-                  else if (attempts > 20) { clearInterval(interval); resolve(false); }
-                }, 250);
-              });
-            await waitForMiniKit();
+            await new Promise<void>((resolve) => {
+              let attempts = 0;
+              const interval = setInterval(() => {
+                attempts++;
+                if (MiniKit.isInstalled() || attempts > 20) {
+                  clearInterval(interval);
+                  resolve();
+                }
+              }, 250);
+            });
           }
-          setMiniKitReady(MiniKit.isInstalled());
-
+          console.log("[App] MiniKit installed:", MiniKit.isInstalled());
           if (MiniKit.user) {
-            const u = MiniKit.user.username || null;
-            if (u) setUsername(u);
-            console.log("[App] MiniKit.user:", JSON.stringify({ username: MiniKit.user.username }));
+            console.log("[App] MiniKit.user:", JSON.stringify({
+              username: MiniKit.user.username,
+              walletAddress: MiniKit.user.walletAddress,
+            }));
           }
         } catch (e) {
-          console.warn("[App] MiniKit init error:", e);
+          console.warn("[App] MiniKit init:", e);
         }
 
-        const storedId = localStorage.getItem("hlove_user_id");
-        const storedNullifier = localStorage.getItem("hlove_nullifier");
-        console.log("[App] stored userId:", storedId, "nullifier:", storedNullifier?.slice(0, 12));
+        // Check stored session
+        const storedWallet = localStorage.getItem("hlove_wallet");
+        const storedUsername = localStorage.getItem("hlove_username");
+        console.log("[App] Stored wallet:", storedWallet?.slice(0, 10));
 
-        if (storedId) {
+        if (storedWallet) {
           try {
-            const checkRes = await fetch(`/api/verify?userId=${storedNullifier || storedId}`);
+            const checkRes = await fetch("/api/verify?wallet=" + encodeURIComponent(storedWallet));
             if (checkRes.ok) {
               const checkData = await checkRes.json();
               if (checkData.valid) {
-                setUserId(checkData.user_id || storedId);
-                setNullifierHash(storedNullifier || null);
+                setWalletAddress(storedWallet);
+                setUsername(storedUsername || checkData.user?.username || null);
                 setVerified(true);
-                await loadProfile(checkData.user_id || storedId);
-                console.log("[App] ✅ Session restored, UUID:", checkData.user_id || storedId);
+                await loadUserAndProfile(storedWallet);
+                console.log("[App] Session restored:", storedWallet.slice(0, 10));
               } else {
-                localStorage.removeItem("hlove_user_id");
+                localStorage.removeItem("hlove_wallet");
                 localStorage.removeItem("hlove_nullifier");
+                localStorage.removeItem("hlove_username");
               }
             } else {
-              setUserId(storedId);
-              setNullifierHash(storedNullifier || null);
+              // Backend down, trust local storage
+              setWalletAddress(storedWallet);
+              setUsername(storedUsername || null);
               setVerified(true);
-              await loadProfile(storedId);
+              await loadUserAndProfile(storedWallet);
             }
           } catch (e) {
-            setUserId(storedId);
+            // Offline fallback
+            setWalletAddress(storedWallet);
+            setUsername(storedUsername || null);
             setVerified(true);
-            await loadProfile(storedId);
+            await loadUserAndProfile(storedWallet);
           }
         }
 
@@ -95,124 +96,53 @@ import { useState, useEffect, useRef } from "react";
       init();
     }, []);
 
-    const loadProfile = async (uid: string) => {
+    const loadUserAndProfile = async (wallet: string) => {
       try {
         const { data: userData } = await supabase
           .from("users")
           .select("*")
-          .eq("id", uid)
+          .eq("wallet_address", wallet)
           .maybeSingle();
 
         if (userData) {
           setUserRecord(userData as UserType);
-          setIsPremium(userData.is_premium || false);
         }
 
         const { data: profileData } = await supabase
           .from("profiles")
           .select("*")
-          .eq("user_id", uid)
+          .eq("user_id", wallet)
           .maybeSingle();
 
         if (profileData) {
           setProfile(profileData);
           console.log("[App] Profile loaded:", profileData.display_name);
         } else {
-          console.log("[App] No profile found, will show onboarding");
+          console.log("[App] No profile, will show onboarding");
         }
       } catch (err) {
-        console.warn("[App] Error loading profile:", err);
+        console.warn("[App] Load error:", err);
       }
     };
 
-    useEffect(() => {
-      const loadWallet = async () => {
-        if (!verified || wallet || !miniKitReady || walletLoading.current) return;
-        walletLoading.current = true;
-
-        try {
-          console.log("[App] Fetching /api/nonce...");
-          const nonceRes = await fetch("/api/nonce");
-          if (!nonceRes.ok) throw new Error("No nonce");
-          const { nonce } = await nonceRes.json();
-          console.log("[App] Nonce:", nonce?.slice(0, 8) + "...");
-
-          console.log("[App] Calling walletAuth...");
-          const auth = await MiniKit.commandsAsync.walletAuth({
-            nonce,
-            requestId: "wallet-auth-" + Date.now(),
-            expirationTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-            notBefore: new Date(Date.now() - 60 * 1000),
-            statement: "Autenticar wallet para H Love",
-          });
-
-          const payload = auth?.finalPayload;
-
-          if (payload?.status === "error") {
-            console.warn("[App] WalletAuth error:", JSON.stringify(payload));
-          } else if (payload?.address && payload?.message && payload?.signature) {
-            console.log("[App] WalletAuth success:", payload.address.slice(0, 10) + "...");
-            try {
-              const vRes = await fetch("/api/walletVerify", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ payload, nonce, userId: nullifierHash }),
-              });
-              const vData = await vRes.json();
-              if (vData.success) {
-                setWallet(vData.address);
-                console.log("[App] ✅ Wallet set:", vData.address.slice(0, 10) + "...");
-              }
-            } catch (e) {
-              console.warn("[App] walletVerify error:", e);
-            }
-          }
-
-          const resolvedAddress = wallet || payload?.address || MiniKit.walletAddress;
-          if (resolvedAddress && !username) {
-            try {
-              const wcRes = await fetch(`https://usernames.worldcoin.org/api/v1/${resolvedAddress}`);
-              if (wcRes.ok) {
-                const wcData = await wcRes.json();
-                if (wcData.username) {
-                  setUsername(wcData.username);
-                  console.log("[App] ✅ Username from Worldcoin:", wcData.username);
-                }
-              }
-            } catch (e) {}
-          }
-
-          if (!username && MiniKit.user?.username) {
-            setUsername(MiniKit.user.username);
-          }
-        } catch (err) {
-          console.error("[App] Wallet error:", err);
-        } finally {
-          walletLoading.current = false;
-        }
-      };
-
-      loadWallet();
-    }, [verified, wallet, miniKitReady]);
-
-    const handleVerified = async (uid: string, nullifier: string) => {
-      setUserId(uid);
-      setNullifierHash(nullifier);
+    const handleVerified = async (wallet: string, nullifier: string, user: string | null) => {
+      setWalletAddress(wallet);
+      setUsername(user);
       setVerified(true);
-      await loadProfile(uid);
+      await loadUserAndProfile(wallet);
     };
 
     const handleOnboardingComplete = (newProfile: Profile) => {
       setProfile(newProfile);
-      console.log("[App] ✅ Onboarding complete:", newProfile.display_name);
+      console.log("[App] Onboarding complete:", newProfile.display_name);
     };
 
     const handleProfileUpdate = async (updates: Partial<Profile>) => {
-      if (!userId) return;
+      if (!walletAddress) return;
       const { data, error } = await supabase
         .from("profiles")
         .update(updates)
-        .eq("user_id", userId)
+        .eq("user_id", walletAddress)
         .select()
         .single();
       if (!error && data) setProfile(data);
@@ -220,14 +150,13 @@ import { useState, useEffect, useRef } from "react";
     };
 
     const handleLogout = () => {
-      localStorage.removeItem("hlove_user_id");
+      localStorage.removeItem("hlove_wallet");
       localStorage.removeItem("hlove_nullifier");
-      setUserId(null);
-      setNullifierHash(null);
+      localStorage.removeItem("hlove_username");
+      setWalletAddress(null);
+      setUsername(null);
       setVerified(false);
       setProfile(null);
-      setWallet(null);
-      setUsername(null);
       setUserRecord(null);
     };
 
@@ -248,11 +177,17 @@ import { useState, useEffect, useRef } from "react";
       return <LandingPage onVerified={handleVerified} />;
     }
 
-    if (!profile && userId) {
-      return <OnboardingPage userId={userId} onComplete={handleOnboardingComplete} />;
+    if (!profile && walletAddress) {
+      return (
+        <OnboardingPage
+          userId={walletAddress}
+          username={username}
+          onComplete={handleOnboardingComplete}
+        />
+      );
     }
 
-    if (!userId || !userRecord || !profile) return null;
+    if (!walletAddress || !profile) return null;
 
     const tabs: { id: Tab; icon: typeof Heart; label: string }[] = [
       { id: "swipe", icon: Flame, label: "Discover" },
@@ -264,12 +199,14 @@ import { useState, useEffect, useRef } from "react";
     return (
       <div className="min-h-screen flex flex-col bg-background">
         <div className="flex-1 overflow-y-auto pb-20">
-          {activeTab === "swipe" && <SwipePage userId={userId} isPremium={isPremium} />}
-          {activeTab === "matches" && <MatchesPage userId={userId} />}
-          {activeTab === "events" && <EventsPage userId={userId} />}
+          {activeTab === "swipe" && (
+            <SwipePage userId={walletAddress} isPremium={userRecord?.is_premium || false} />
+          )}
+          {activeTab === "matches" && <MatchesPage userId={walletAddress} />}
+          {activeTab === "events" && <EventsPage userId={walletAddress} />}
           {activeTab === "profile" && (
             <ProfilePage
-              user={userRecord}
+              user={userRecord!}
               profile={profile}
               onUpdate={handleProfileUpdate}
               onLogout={handleLogout}
@@ -301,13 +238,11 @@ import { useState, useEffect, useRef } from "react";
     );
   }
 
-  function App() {
+  export default function App() {
     return (
       <QueryClientProvider client={queryClient}>
         <AppContent />
       </QueryClientProvider>
     );
   }
-
-  export default App;
   
