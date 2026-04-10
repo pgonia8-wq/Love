@@ -1,10 +1,11 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
   import { motion, AnimatePresence, useMotionValue, useTransform, PanInfo } from "framer-motion";
-  import { Heart, X, Star, Undo2, MapPin, Sparkles, Shield, Lock, Zap, Crown, SlidersHorizontal, Navigation, Wifi, CheckCircle2, Plane, Users } from "lucide-react";
+  import { Heart, X, Star, Undo2, MapPin, Sparkles, Shield, Lock, Zap, Crown, SlidersHorizontal, Navigation, Wifi, CheckCircle2, Plane, Users, Clock, TrendingUp } from "lucide-react";
   import { useSwipes } from "@/hooks/useSwipes";
   import { useGeolocation } from "@/hooks/useGeolocation";
   import { useI18n } from "@/lib/i18n";
   import { TrustBadgeInline } from "@/components/TrustBadge";
+  import { SpotlightBanner, CrushButton, CrushCounter, WeeklyTop5, SocialProofBadges } from "@/components/FomoFeatures";
   import { Button } from "@/components/ui/button";
   import type { SwipeProfile } from "@/types";
 
@@ -29,8 +30,10 @@ import { useState, useCallback, useMemo, useEffect } from "react";
     const [showFilters, setShowFilters] = useState(false);
     const [photoIdx, setPhotoIdx] = useState(0);
     const [likesCount] = useState(Math.floor(Math.random()*12)+5);
+    const [crushCount] = useState(Math.floor(Math.random()*4)+1);
     const [maxDistance, setMaxDistance] = useState(() => parseInt(localStorage.getItem("hlove_max_dist") || "50"));
     const [ageRange, setAgeRange] = useState<[number,number]>([18, 45]);
+    const [showTop5, setShowTop5] = useState(true);
 
     useEffect(() => { if (position) updateUserLocation(userId); }, [position, userId]);
 
@@ -68,6 +71,7 @@ import { useState, useCallback, useMemo, useEffect } from "react";
     };
 
     if (isLoading) return <div className="flex-1 flex items-center justify-center"><div className="w-12 h-12 border-3 border-love-pink/30 border-t-love-pink rounded-full animate-spin" /></div>;
+
     if (!cur) return (
       <div className="flex-1 flex flex-col items-center justify-center px-8 text-center">
         <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center mb-5"><Heart className="w-10 h-10 text-muted-foreground" /></div>
@@ -79,7 +83,7 @@ import { useState, useCallback, useMemo, useEffect } from "react";
     return (
       <div className="flex-1 flex flex-col relative overflow-hidden">
         {/* Top bar */}
-        <div className="absolute top-3 left-4 right-14 z-40 flex items-center gap-2">
+        <div className="absolute top-3 left-4 right-4 z-40 flex items-center gap-2">
           {!isPremium && (
             <button onClick={() => setShowGate(true)} className="flex items-center gap-1.5 bg-love-gold/10 border border-love-gold/30 rounded-full px-2.5 py-1">
               <Heart className="w-3.5 h-3.5 text-love-gold" fill="currentColor" />
@@ -87,6 +91,7 @@ import { useState, useCallback, useMemo, useEffect } from "react";
               <Lock className="w-3 h-3 text-love-gold/60" />
             </button>
           )}
+          <CrushCounter count={crushCount} onClick={() => setShowGate(true)} />
           {position && (
             <div className="flex items-center gap-1 bg-muted/50 border border-border/30 rounded-full px-2.5 py-1">
               <Navigation className="w-3 h-3 text-love-pink" /><span className="text-[10px] text-foreground/70">{position.city}</span>
@@ -95,6 +100,12 @@ import { useState, useCallback, useMemo, useEffect } from "react";
           <button onClick={() => setShowFilters(true)} className="ml-auto flex items-center gap-1 bg-muted/50 border border-border/30 rounded-full px-2.5 py-1">
             <SlidersHorizontal className="w-3 h-3 text-muted-foreground" /><span className="text-[10px]">{maxDistance}km</span>
           </button>
+        </div>
+
+        {/* Spotlight + Top 5 */}
+        <div className="pt-14 z-30">
+          <SpotlightBanner isPremium={isPremium} onUpgrade={onUpgrade || (() => setShowGate(true))} />
+          {showTop5 && <WeeklyTop5 userId={userId} isPremium={isPremium} onUpgrade={onUpgrade || (() => setShowGate(true))} />}
         </div>
 
         {/* Filters */}
@@ -137,7 +148,8 @@ import { useState, useCallback, useMemo, useEffect } from "react";
                     { icon: Zap, text: t("premium.freeBoost"), color: "text-love-purple" },
                     { icon: Shield, text: t("premium.priorityFeed"), color: "text-green-500" },
                     { icon: Plane, text: t("premium.travelMode"), color: "text-blue-500" },
-                    { icon: Navigation, text: t("premium.changeCountry"), color: "text-orange-500" },
+                    { icon: Star, text: "Weekly Top 5 completo", color: "text-love-gold" },
+                    { icon: Heart, text: "Crushes ilimitados", color: "text-love-purple" },
                   ].map((f, i) => (
                     <div key={i} className="flex items-center gap-3 px-3 py-2 bg-muted/50 rounded-xl"><f.icon className={"w-4 h-4 "+f.color} /><span className="text-sm">{f.text}</span></div>
                   ))}
@@ -149,7 +161,7 @@ import { useState, useCallback, useMemo, useEffect } from "react";
           )}
         </AnimatePresence>
 
-        {/* Match */}
+        {/* Match celebration */}
         <AnimatePresence>
           {showMatch && (
             <motion.div initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}} className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-background/90 backdrop-blur-xl px-8">
@@ -163,7 +175,7 @@ import { useState, useCallback, useMemo, useEffect } from "react";
         </AnimatePresence>
 
         {/* Card */}
-        <div className="flex-1 relative flex items-center justify-center p-4 pt-12">
+        <div className="flex-1 relative flex items-center justify-center p-4">
           <AnimatePresence mode="popLayout">
             <motion.div key={cur.user_id} style={{x,rotate}} drag dragConstraints={{left:0,right:0,top:0,bottom:0}} dragElastic={0.8} onDragEnd={onDragEnd}
               initial={{scale:0.95,opacity:0}} animate={{scale:1,opacity:1}}
@@ -212,15 +224,16 @@ import { useState, useCallback, useMemo, useEffect } from "react";
                     {curDist !== null && <span className="text-white/50 text-[10px] flex items-center gap-0.5"><Navigation className="w-2.5 h-2.5" />{formatDistance(curDist)} {t("swipe.away")}</span>}
                   </div>
 
-                  {/* Trust badges row */}
                   {!locked && (
-                    <div className="flex items-center gap-1.5 mb-2">
-                      <TrustBadgeInline
-                        trustScore={(cur as any).trust_score || 0}
-                        verifiedDates={(cur as any).verified_dates_count || 0}
-                        vouchCount={(cur as any).vouch_count || 0}
-                        compact
-                      />
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <TrustBadgeInline trustScore={(cur as any).trust_score || 0} verifiedDates={(cur as any).verified_dates_count || 0} vouchCount={(cur as any).vouch_count || 0} compact />
+                      <SocialProofBadges responseTime={(cur as any).avg_response_time_min} ghostRate={(cur as any).ghost_rate_pct} matchRate={(cur as any).match_rate_pct} />
+                    </div>
+                  )}
+
+                  {!locked && (
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <CrushButton userId={userId} targetId={cur.user_id} isPremium={isPremium} onUpgrade={onUpgrade || (() => setShowGate(true))} />
                     </div>
                   )}
 
