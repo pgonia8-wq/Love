@@ -1,6 +1,6 @@
 export const WORLD_APP_ID = import.meta.env.VITE_WORLD_APP_ID || "app_hlove";
 
-export const VERIFY_ACTION = "hlove-verify-human";
+export const VERIFY_ACTION = "verifica-que-eres-humano-";
 
 export const PLATFORM_FEE_PERCENT = 0.15;
 
