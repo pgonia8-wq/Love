@@ -1,268 +1,181 @@
-import { useState } from "react";
-  import { motion, AnimatePresence } from "framer-motion";
-  import { Shield, Heart, Sparkles, Users, CheckCircle } from "lucide-react";
+import { useState, useEffect } from "react";
+  import { motion } from "framer-motion";
+  import { Heart, Shield, Star, Users, Sparkles, AlertCircle } from "lucide-react";
   import { Button } from "@/components/ui/button";
-  import { MiniKit, VerificationLevel } from "@worldcoin/minikit-js";
+  import { useI18n, LanguageSelector } from "@/lib/i18n";
+  import { MiniKit } from "@worldcoin/minikit-js";
 
   interface LandingPageProps {
-    onVerified: (walletAddress: string, nullifierHash: string, username: string | null) => void;
+    onVerified: (wallet: string, nullifier: string, username: string | null) => void;
   }
 
   export default function LandingPage({ onVerified }: LandingPageProps) {
-    const [isPending, setIsPending] = useState(false);
+    const { t } = useI18n();
+    const [step, setStep] = useState<"idle" | "wallet" | "verifying" | "saving">("idle");
     const [error, setError] = useState<string | null>(null);
-    const [step, setStep] = useState<string>("");
+    const [isMiniKit, setIsMiniKit] = useState(false);
+
+    useEffect(() => {
+      const check = () => setIsMiniKit(MiniKit.isInstalled());
+      check();
+      const interval = setInterval(check, 500);
+      setTimeout(() => clearInterval(interval), 5000);
+      return () => clearInterval(interval);
+    }, []);
 
     const handleVerify = async () => {
-      setIsPending(true);
-      setError(null);
-
       if (!MiniKit.isInstalled()) {
-        setError("Abre esta app dentro de World App");
-        setIsPending(false);
+        setError(t("landing.openInWorldApp"));
         return;
       }
+      setError(null);
+      setStep("wallet");
 
-      let walletAddress: string | null = null;
-      let username: string | null = null;
-
-      // Step 1: walletAuth — get wallet_address + username
       try {
-        setStep("Autenticando wallet...");
-        console.log("[Verify] Step 1: walletAuth");
+        let walletAddress = "";
+        let username: string | null = null;
 
-        const nonceRes = await fetch("/api/nonce");
-        if (!nonceRes.ok) throw new Error("No se pudo obtener nonce");
-        const { nonce } = await nonceRes.json();
-
-        const authRes = await MiniKit.commandsAsync.walletAuth({
-          nonce,
-          requestId: "hlove-auth-" + Date.now(),
-          expirationTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-          notBefore: new Date(Date.now() - 60 * 1000),
-          statement: "Autenticar wallet para H Love",
-        });
-
-        const authPayload = authRes?.finalPayload;
-        if (authPayload?.status === "error") {
-          console.warn("[Verify] walletAuth declined, trying MiniKit.user");
-        } else if (authPayload?.address) {
-          walletAddress = authPayload.address;
-          console.log("[Verify] walletAuth address:", walletAddress);
-
-          // Verify SIWE signature on backend
-          try {
-            const siweRes = await fetch("/api/walletVerify", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ payload: authPayload, nonce }),
-            });
-            const siweData = await siweRes.json();
-            if (siweData.success) {
-              walletAddress = siweData.address || walletAddress;
-            }
-          } catch (e) {
-            console.warn("[Verify] SIWE verify error:", e);
+        try {
+          const walletAuthRes = await MiniKit.commandsAsync.walletAuth({ nonce: Date.now().toString(), statement: "Sign in to H Love" });
+          console.log("[Landing] walletAuth:", JSON.stringify(walletAuthRes?.finalPayload));
+          if (walletAuthRes?.finalPayload) {
+            walletAddress = (walletAuthRes.finalPayload as any).address || "";
+            username = (walletAuthRes.finalPayload as any).username || null;
           }
+        } catch (e) {
+          console.warn("[Landing] walletAuth fallback:", e);
         }
 
-        // Get username from MiniKit.user
-        username = MiniKit.user?.username || null;
         if (!walletAddress) {
-          walletAddress = MiniKit.user?.walletAddress || null;
+          try {
+            walletAddress = (MiniKit as any).user?.walletAddress || "";
+            username = (MiniKit as any).user?.username || null;
+          } catch {}
         }
-        console.log("[Verify] wallet:", walletAddress, "username:", username);
 
         if (!walletAddress) {
-          setError("No se pudo obtener tu wallet. Intenta de nuevo.");
-          setIsPending(false);
+          setError(t("landing.walletError"));
+          setStep("idle");
           return;
         }
-      } catch (err) {
-        console.error("[Verify] walletAuth error:", err);
-        // Try to get from MiniKit.user as fallback
-        walletAddress = MiniKit.user?.walletAddress || null;
-        username = MiniKit.user?.username || null;
-        if (!walletAddress) {
-          setError("Error al autenticar wallet");
-          setIsPending(false);
-          return;
-        }
-      }
 
-      // Step 2: World ID verify — get nullifier_hash + proof
-      try {
-        setStep("Verificando humanidad...");
-        console.log("[Verify] Step 2: verify (Orb)");
+        console.log("[Landing] Wallet:", walletAddress, "Username:", username);
+        setStep("verifying");
 
-        const verifyRes = await MiniKit.commandsAsync.verify({
+        const verifyPayload = {
           action: "verifica-que-eres-humano",
-          verification_level: VerificationLevel.Orb,
-          signal: walletAddress || "",
-        });
+          verification_level: "orb",
+        };
 
-        const proof = verifyRes?.finalPayload;
-        console.log("[Verify] proof status:", proof?.status);
+        const verifyRes = await MiniKit.commandsAsync.verify(verifyPayload);
+        console.log("[Landing] verify:", JSON.stringify(verifyRes?.finalPayload));
 
-        if (!proof || proof.status === "error") {
-          setError("Verificación cancelada o fallida");
-          setIsPending(false);
+        if (!verifyRes?.finalPayload || (verifyRes.finalPayload as any).status === "error") {
+          setError(t("landing.verifyCancelled"));
+          setStep("idle");
           return;
         }
 
-        // Step 3: Send to backend
-        setStep("Guardando...");
-        console.log("[Verify] Step 3: sending to backend");
+        setStep("saving");
+        const payload = verifyRes.finalPayload as any;
 
-        const res = await fetch("/api/verify", {
+        const response = await fetch("/api/verify", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            payload: proof,
+            proof: payload.proof,
+            merkle_root: payload.merkle_root,
+            nullifier_hash: payload.nullifier_hash,
+            verification_level: payload.verification_level || "orb",
+            action: "verifica-que-eres-humano",
             wallet_address: walletAddress,
-            username: username,
+            username: username || undefined,
           }),
         });
 
-        const backend = await res.json();
-        console.log("[Verify] Backend:", JSON.stringify(backend));
+        const data = await response.json();
+        console.log("[Landing] backend:", JSON.stringify(data));
 
-        if (backend.success && backend.wallet_address) {
-          localStorage.setItem("hlove_wallet", backend.wallet_address);
-          localStorage.setItem("hlove_nullifier", backend.nullifier_hash);
-          if (backend.username) localStorage.setItem("hlove_username", backend.username);
-          onVerified(backend.wallet_address, backend.nullifier_hash, backend.username || username);
-        } else {
-          throw new Error(backend.error || "Backend rechazó la verificación");
+        if (!response.ok || !data.success) {
+          setError(data.error || t("landing.backendError"));
+          setStep("idle");
+          return;
         }
+
+        const returnedWallet = data.wallet_address || walletAddress;
+        localStorage.setItem("hlove_wallet", returnedWallet);
+        localStorage.setItem("hlove_nullifier", payload.nullifier_hash);
+        if (username) localStorage.setItem("hlove_username", username);
+
+        onVerified(returnedWallet, payload.nullifier_hash, username);
       } catch (err) {
-        console.error("[Verify] Error:", err);
-        setError(err instanceof Error ? err.message : "Error inesperado");
-      } finally {
-        setIsPending(false);
-        setStep("");
+        console.error("[Landing] Error:", err);
+        setError(err instanceof Error ? err.message : "Unknown error");
+        setStep("idle");
       }
     };
 
+    const features = [
+      { icon: Shield, text: t("landing.feature1") },
+      { icon: Star, text: t("landing.feature2") },
+      { icon: Users, text: t("landing.feature3") },
+      { icon: Heart, text: t("landing.feature4") },
+    ];
+
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center px-6 py-12 relative overflow-hidden">
+      <div className="min-h-screen flex flex-col bg-background relative overflow-hidden">
+        <div className="absolute top-4 right-4 z-40"><LanguageSelector /></div>
+
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute top-1/4 -left-20 w-72 h-72 bg-love-pink/10 rounded-full blur-3xl" />
-          <div className="absolute bottom-1/4 -right-20 w-80 h-80 bg-love-purple/10 rounded-full blur-3xl" />
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-love-gold/5 rounded-full blur-3xl" />
+          <div className="absolute -top-40 -right-40 w-80 h-80 rounded-full bg-love-pink/5 blur-3xl" />
+          <div className="absolute -bottom-40 -left-40 w-80 h-80 rounded-full bg-love-purple/5 blur-3xl" />
         </div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, ease: "easeOut" }}
-          className="relative z-10 flex flex-col items-center max-w-md w-full"
-        >
-          <motion.div
-            initial={{ scale: 0 }}
-            animate={{ scale: 1 }}
-            transition={{ delay: 0.2, type: "spring", stiffness: 200 }}
-            className="w-24 h-24 rounded-3xl gradient-love flex items-center justify-center mb-8 shadow-xl animate-pulse-glow"
-          >
-            <Heart className="w-12 h-12 text-white" fill="white" />
+        <div className="flex-1 flex flex-col items-center justify-center px-8 relative z-10">
+          <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", duration: 0.8, delay: 0.2 }} className="mb-8">
+            <div className="w-24 h-24 rounded-3xl gradient-love flex items-center justify-center shadow-2xl shadow-love-pink/30">
+              <Heart className="w-12 h-12 text-white" fill="white" />
+            </div>
           </motion.div>
 
-          <motion.h1
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.4 }}
-            className="text-5xl font-bold gradient-love-text mb-3 tracking-tight"
-          >
-            H Love
+          <motion.h1 initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }} className="text-4xl font-bold gradient-love-text mb-3">
+            {t("landing.title")}
           </motion.h1>
-
-          <motion.p
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.5 }}
-            className="text-muted-foreground text-lg text-center mb-10 leading-relaxed"
-          >
-            Real humans. Real connections.
-            <br />
-            <span className="text-foreground/80">Verified by World ID.</span>
+          <motion.p initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.7 }} className="text-center text-muted-foreground max-w-xs mb-2">
+            {t("landing.subtitle")}
+          </motion.p>
+          <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.9 }} className="text-xs text-love-gold font-medium flex items-center gap-1 mb-8">
+            <Sparkles className="w-3 h-3" />{t("landing.subtitle2")}
           </motion.p>
 
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.6 }}
-            className="w-full space-y-4 mb-10"
-          >
-            {[
-              { icon: Shield, text: "100% Orb-verified humans only", color: "text-love-pink" },
-              { icon: Sparkles, text: "Premium connections, zero bots", color: "text-love-purple" },
-              { icon: Users, text: "Exclusive events & meetups", color: "text-love-gold" },
-              { icon: CheckCircle, text: "Safe, respectful community", color: "text-love-rose" },
-            ].map((item, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.7 + i * 0.1 }}
-                className="flex items-center gap-4 glass-card rounded-xl px-5 py-3.5"
-              >
-                <item.icon className={`w-5 h-5 ${item.color} shrink-0`} />
-                <span className="text-sm text-foreground/90">{item.text}</span>
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.1 }} className="w-full max-w-xs space-y-3 mb-8">
+            {features.map((f, i) => (
+              <motion.div key={i} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 1.2 + i * 0.1 }} className="flex items-center gap-3 px-4 py-2.5 bg-card/50 rounded-xl border border-border/30">
+                <f.icon className="w-4 h-4 text-love-pink shrink-0" />
+                <span className="text-sm text-foreground/80">{f.text}</span>
               </motion.div>
             ))}
           </motion.div>
 
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 1.1 }}
-            className="w-full"
-          >
-            <Button
-              onClick={handleVerify}
-              disabled={isPending}
-              className="w-full h-14 text-lg font-semibold gradient-love border-0 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
-            >
-              {isPending ? (
-                <div className="flex items-center gap-3">
-                  <motion.div
-                    animate={{ rotate: 360 }}
-                    transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
-                    className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full"
-                  />
-                  <span className="text-sm">{step || "Verificando..."}</span>
-                </div>
-              ) : (
-                <>
-                  <Shield className="w-5 h-5 mr-2" />
-                  Verify with World ID
-                </>
-              )}
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 1.6 }} className="w-full max-w-xs">
+            <Button onClick={handleVerify} disabled={step !== "idle"} className="w-full h-14 gradient-love border-0 rounded-2xl text-white font-semibold text-base shadow-xl shadow-love-pink/20">
+              {step === "idle" && (<><Shield className="w-5 h-5 mr-2" />{t("landing.verify")}</>)}
+              {step === "wallet" && (<><span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />{t("landing.authenticating")}</>)}
+              {step === "verifying" && (<><span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />{t("landing.verifying")}</>)}
+              {step === "saving" && (<><span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin mr-2" />{t("landing.saving")}</>)}
             </Button>
           </motion.div>
 
-          <AnimatePresence>
-            {error && (
-              <motion.p
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                className="mt-4 text-sm text-destructive text-center"
-              >
-                {error}
-              </motion.p>
-            )}
-          </AnimatePresence>
+          {error && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4 flex items-center gap-2 text-destructive text-sm max-w-xs text-center">
+              <AlertCircle className="w-4 h-4 shrink-0" /><span>{error}</span>
+            </motion.div>
+          )}
 
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 1.3 }}
-            className="mt-6 text-xs text-muted-foreground text-center"
-          >
-            Requires World App with Orb verification
-          </motion.p>
-        </motion.div>
+          <p className="mt-6 text-[10px] text-muted-foreground/60 text-center">
+            {t("landing.requires")}
+          </p>
+        </div>
       </div>
     );
   }
