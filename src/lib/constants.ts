@@ -1,4 +1,4 @@
-export const WORLD_APP_ID = import.meta.env.VITE_WORLD_APP_ID || "app_hlove";
+export const WORLD_APP_ID = import.meta.env.VITE_WORLD_APP_ID || "app_ccf542f4e61d9faa92be78b5154299b4";
 
 export const VERIFY_ACTION = "verifica-que-eres-humano-";
 
