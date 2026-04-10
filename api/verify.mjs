@@ -1,11 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
-  if (!process.env.SUPABASE_URL) {
-    console.error("[VERIFY] ERROR: SUPABASE_URL no está configurada");
-  }
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    console.error("[VERIFY] ERROR: SUPABASE_SERVICE_ROLE_KEY no está configurada");
-  }
+  if (!process.env.SUPABASE_URL) console.error("[VERIFY] SUPABASE_URL no configurada");
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) console.error("[VERIFY] SUPABASE_SERVICE_ROLE_KEY no configurada");
 
   const supabase = createClient(
     process.env.SUPABASE_URL ?? "",
@@ -24,7 +20,10 @@ import { createClient } from "@supabase/supabase-js";
     if (req.method !== "POST") return res.status(405).json({ success: false, error: "Method not allowed" });
 
     const body = req.body || {};
-    const { payload } = body;
+    const { payload, nonce } = body;
+
+    console.log("[VERIFY] payload keys:", Object.keys(payload || {}));
+    console.log("[VERIFY] nonce:", nonce);
 
     if (
       !payload ||
@@ -40,8 +39,36 @@ import { createClient } from "@supabase/supabase-js";
       return res.status(400).json({ success: false, error: "Solo se acepta verificación Orb" });
     }
 
+    if (!nonce) {
+      return res.status(400).json({ success: false, error: "Nonce requerido" });
+    }
+
     const nullifierHash = payload.nullifier_hash;
 
+    // Validar nonce
+    try {
+      const { data: nonceRow } = await supabase
+        .from("nonces")
+        .select("*")
+        .eq("nonce", nonce)
+        .eq("used", false)
+        .maybeSingle();
+
+      if (!nonceRow) {
+        console.warn("[VERIFY] Nonce inválido o ya usado:", nonce);
+        return res.status(400).json({ success: false, error: "Nonce inválido o expirado" });
+      }
+
+      if (new Date(nonceRow.expires_at) < new Date()) {
+        return res.status(400).json({ success: false, error: "Nonce expirado" });
+      }
+
+      await supabase.from("nonces").update({ used: true }).eq("nonce", nonce);
+    } catch (err) {
+      console.warn("[VERIFY] Error validando nonce:", err.message);
+    }
+
+    // Anti-replay
     try {
       const { data: existing } = await supabase
         .from("users")
@@ -53,47 +80,62 @@ import { createClient } from "@supabase/supabase-js";
         return res.status(200).json({ success: true, user: existing, isNewUser: false, reused: true });
       }
     } catch (err) {
-      console.warn("[VERIFY] No se pudo verificar anti-replay:", err.message);
+      console.warn("[VERIFY] Anti-replay check error:", err.message);
     }
 
+    // Verificar con World ID v4 API
     let verifyData;
     try {
+      const verifyBody = {
+        nonce: nonce,
+        action: ACTION_ID,
+        proof: payload.proof,
+        merkle_root: payload.merkle_root,
+        nullifier_hash: nullifierHash,
+        verification_level: payload.verification_level,
+      };
+
+      console.log("[VERIFY] Calling World ID v4...");
+      console.log("[VERIFY] URL:", `https://developer.worldcoin.org/api/v2/verify/${APP_ID}`);
+      console.log("[VERIFY] Body:", JSON.stringify(verifyBody));
+
       const verifyResponse = await fetch(
         `https://developer.worldcoin.org/api/v2/verify/${APP_ID}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: ACTION_ID,
-            merkle_root: payload.merkle_root,
-            proof: payload.proof,
-            nullifier_hash: nullifierHash,
-            verification_level: payload.verification_level,
-          }),
+          body: JSON.stringify(verifyBody),
         }
       );
 
       verifyData = await verifyResponse.json();
-      console.log("[VERIFY] Worldcoin status:", verifyResponse.status);
-      console.log("[VERIFY] Worldcoin response:", JSON.stringify(verifyData));
+      console.log("[VERIFY] World ID status:", verifyResponse.status);
+      console.log("[VERIFY] World ID response:", JSON.stringify(verifyData));
 
       const isSuccess = verifyResponse.ok && (verifyData.success === true || verifyData.success === "true");
 
       if (!isSuccess) {
         const errMsg = verifyData.detail ?? verifyData.error ?? "";
         if (errMsg.includes("already") || verifyData.code === "already_verified") {
-          return res.status(200).json({ success: true, nullifier_hash: nullifierHash, reused: true });
+          const { data: existingUser } = await supabase
+            .from("users")
+            .select("*")
+            .eq("nullifier_hash", nullifierHash)
+            .maybeSingle();
+          return res.status(200).json({ success: true, user: existingUser, nullifier_hash: nullifierHash, reused: true });
         }
         return res.status(verifyResponse.status || 400).json({
           success: false,
-          error: errMsg || "Verificación fallida en Worldcoin",
+          error: errMsg || "Verificación fallida",
+          worldid_response: verifyData,
         });
       }
     } catch (err) {
-      console.error("[VERIFY] Error de red al contactar Worldcoin:", err.message);
-      return res.status(500).json({ success: false, error: "Error al contactar Worldcoin" });
+      console.error("[VERIFY] Error de red:", err.message);
+      return res.status(500).json({ success: false, error: "Error al contactar World ID" });
     }
 
+    // Guardar usuario
     try {
       const worldIdHash = `wid_${nullifierHash.slice(0, 16)}`;
 
@@ -112,11 +154,11 @@ import { createClient } from "@supabase/supabase-js";
         .single();
 
       if (upsertError) {
-        console.error("[VERIFY] Error upsert:", upsertError.message);
+        console.error("[VERIFY] Upsert error:", upsertError.message);
         return res.status(500).json({ success: false, error: upsertError.message });
       }
 
-      return res.status(200).json({ success: true, user, nullifier_hash: nullifierHash });
+      return res.status(200).json({ success: true, user, nullifier_hash: nullifierHash, isNewUser: true });
     } catch (err) {
       console.error("[VERIFY] Error:", err.message);
       return res.status(500).json({ success: false, error: "Error al guardar usuario" });
