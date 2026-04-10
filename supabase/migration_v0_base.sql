@@ -175,16 +175,16 @@
   ALTER TABLE events ENABLE ROW LEVEL SECURITY;
   ALTER TABLE event_tickets ENABLE ROW LEVEL SECURITY;
 
-  CREATE POLICY IF NOT EXISTS "Full access users" ON users FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access profiles" ON profiles FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access swipes" ON swipes FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access matches" ON matches FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access messages" ON messages FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access payments" ON payments FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access subscriptions" ON subscriptions FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access reports" ON reports FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access events" ON events FOR ALL USING (true);
-  CREATE POLICY IF NOT EXISTS "Full access event_tickets" ON event_tickets FOR ALL USING (true);
+  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access users' AND tablename = 'users') THEN CREATE POLICY "Full access users" ON users FOR ALL USING (true); END IF; END $;
+  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access profiles' AND tablename = 'profiles') THEN CREATE POLICY "Full access profiles" ON profiles FOR ALL USING (true); END IF; END $;
+  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access swipes' AND tablename = 'swipes') THEN CREATE POLICY "Full access swipes" ON swipes FOR ALL USING (true); END IF; END $;
+  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access matches' AND tablename = 'matches') THEN CREATE POLICY "Full access matches" ON matches FOR ALL USING (true); END IF; END $;
+  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access messages' AND tablename = 'messages') THEN CREATE POLICY "Full access messages" ON messages FOR ALL USING (true); END IF; END $;
+  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access payments' AND tablename = 'payments') THEN CREATE POLICY "Full access payments" ON payments FOR ALL USING (true); END IF; END $;
+  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access subscriptions' AND tablename = 'subscriptions') THEN CREATE POLICY "Full access subscriptions" ON subscriptions FOR ALL USING (true); END IF; END $;
+  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access reports' AND tablename = 'reports') THEN CREATE POLICY "Full access reports" ON reports FOR ALL USING (true); END IF; END $;
+  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access events' AND tablename = 'events') THEN CREATE POLICY "Full access events" ON events FOR ALL USING (true); END IF; END $;
+  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access event_tickets' AND tablename = 'event_tickets') THEN CREATE POLICY "Full access event_tickets" ON event_tickets FOR ALL USING (true); END IF; END $;
 
   SELECT 'V0 Base Schema completed!' as status;
   
