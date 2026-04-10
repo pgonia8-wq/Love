@@ -10,7 +10,7 @@
     },
     "dependencies": {
       "@supabase/supabase-js": "^2.102.1",
-      "@worldcoin/minikit-js": "^2.0.3",
+      "@worldcoin/minikit-js": "1.10.0",
       "react": "19.1.0",
       "react-dom": "19.1.0",
       "viem": "^2.23.5",
