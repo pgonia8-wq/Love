@@ -1,142 +1,167 @@
-import { motion } from "framer-motion";
-import { MessageCircle, Heart, Shield } from "lucide-react";
-import { useMatches } from "@/hooks/useMatches";
-import { useLocation } from "wouter";
-import type { MatchWithProfile } from "@/types";
+import { useState, useEffect } from "react";
+  import { motion, AnimatePresence } from "framer-motion";
+  import { Heart, MessageCircle, Shield, Search, ArrowLeft, Send } from "lucide-react";
+  import { useI18n } from "@/lib/i18n";
+  import { supabase } from "@/lib/supabase";
+  import { Button } from "@/components/ui/button";
 
-interface MatchesPageProps {
-  userId: string;
-}
-
-function formatTime(dateStr: string | null) {
-  if (!dateStr) return "";
-  const d = new Date(dateStr);
-  const now = new Date();
-  const diff = now.getTime() - d.getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "now";
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return `${days}d`;
-}
-
-export default function MatchesPage({ userId }: MatchesPageProps) {
-  const { matches, isLoading } = useMatches(userId);
-  const [, setLocation] = useLocation();
-
-  const newMatches = matches.filter((m) => !m.last_message_at);
-  const conversations = matches.filter((m) => m.last_message_at);
-
-  if (isLoading) {
-    return (
-      <div className="flex-1 flex items-center justify-center">
-        <div className="w-10 h-10 border-3 border-love-pink/30 border-t-love-pink rounded-full animate-spin" />
-      </div>
-    );
+  interface MatchUser {
+    id: string;
+    display_name: string;
+    photos: string[];
+    age: number;
+    city?: string;
+    bio?: string;
+    matched_at: string;
+    last_message?: string;
+    unread?: boolean;
   }
 
-  return (
-    <div className="flex-1 flex flex-col px-4 py-4 overflow-auto">
-      <h2 className="text-2xl font-bold gradient-love-text mb-5">Matches</h2>
+  interface MatchesPageProps {
+    userId: string;
+  }
 
-      {newMatches.length > 0 && (
-        <div className="mb-6">
-          <h3 className="text-sm font-medium text-muted-foreground mb-3">New Matches</h3>
-          <div className="flex gap-3 overflow-x-auto pb-2 -mx-4 px-4">
-            {newMatches.map((match, i) => (
-              <motion.button
-                key={match.id}
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                transition={{ delay: i * 0.05 }}
-                onClick={() => setLocation(`/chat/${match.id}`)}
-                className="flex flex-col items-center shrink-0"
-              >
-                <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-love-pink p-0.5">
-                  <img
-                    src={match.profile?.photos?.[0] || "/placeholder.jpg"}
-                    alt=""
-                    className="w-full h-full rounded-full object-cover"
-                  />
+  export default function MatchesPage({ userId }: MatchesPageProps) {
+    const { t } = useI18n();
+    const [matches, setMatches] = useState<MatchUser[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [chatWith, setChatWith] = useState<MatchUser | null>(null);
+    const [messages, setMessages] = useState<any[]>([]);
+    const [newMsg, setNewMsg] = useState("");
+    const [sending, setSending] = useState(false);
+
+    useEffect(() => {
+      loadMatches();
+    }, [userId]);
+
+    const loadMatches = async () => {
+      try {
+        const { data: matchRows } = await supabase
+          .from("matches")
+          .select("*")
+          .or(`user1_id.eq.${userId},user2_id.eq.${userId}`)
+          .order("created_at", { ascending: false });
+
+        if (!matchRows || matchRows.length === 0) {
+          setMatches([]);
+          setLoading(false);
+          return;
+        }
+
+        const otherIds = matchRows.map((m: any) => m.user1_id === userId ? m.user2_id : m.user1_id);
+        const { data: profiles } = await supabase.from("profiles").select("*").in("user_id", otherIds);
+
+        const mapped = matchRows.map((m: any) => {
+          const otherId = m.user1_id === userId ? m.user2_id : m.user1_id;
+          const profile = profiles?.find((p: any) => p.user_id === otherId);
+          return {
+            id: otherId,
+            display_name: profile?.display_name || "Unknown",
+            photos: profile?.photos || [],
+            age: profile?.age || 0,
+            city: profile?.city,
+            bio: profile?.bio,
+            matched_at: m.created_at,
+          };
+        });
+
+        setMatches(mapped);
+      } catch (err) {
+        console.error("Load matches error:", err);
+      }
+      setLoading(false);
+    };
+
+    const openChat = async (match: MatchUser) => {
+      setChatWith(match);
+      const { data } = await supabase
+        .from("messages")
+        .select("*")
+        .or(`and(sender_id.eq.${userId},receiver_id.eq.${match.id}),and(sender_id.eq.${match.id},receiver_id.eq.${userId})`)
+        .order("created_at", { ascending: true });
+      setMessages(data || []);
+    };
+
+    const sendMessage = async () => {
+      if (!newMsg.trim() || !chatWith || sending) return;
+      setSending(true);
+      const msg = { sender_id: userId, receiver_id: chatWith.id, content: newMsg.trim(), read: false };
+      const { data, error } = await supabase.from("messages").insert(msg).select().single();
+      if (!error && data) setMessages(prev => [...prev, data]);
+      setNewMsg("");
+      setSending(false);
+    };
+
+    if (chatWith) {
+      return (
+        <div className="flex flex-col h-full">
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-border/50 bg-card/50 backdrop-blur-lg">
+            <button onClick={() => setChatWith(null)}><ArrowLeft className="w-5 h-5" /></button>
+            <img src={chatWith.photos?.[0] || "/placeholder.jpg"} alt="" className="w-9 h-9 rounded-full object-cover" />
+            <div className="flex-1"><h4 className="font-semibold text-sm">{chatWith.display_name}</h4><p className="text-[10px] text-muted-foreground">Online</p></div>
+          </div>
+          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+            {messages.length === 0 && (
+              <div className="text-center py-12">
+                <Heart className="w-10 h-10 text-love-pink/30 mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground">{t("chat.startConvo")}</p>
+                <p className="text-xs text-muted-foreground/60 mt-1">{t("chat.saySomething", { name: chatWith.display_name })}</p>
+              </div>
+            )}
+            {messages.map((msg: any) => (
+              <div key={msg.id} className={`flex ${msg.sender_id === userId ? "justify-end" : "justify-start"}`}>
+                <div className={`max-w-[75%] px-3 py-2 rounded-2xl text-sm ${msg.sender_id === userId ? "gradient-love text-white rounded-br-md" : "bg-muted rounded-bl-md"}`}>
+                  {msg.content}
                 </div>
-                <span className="text-xs text-foreground/80 mt-1.5 max-w-[64px] truncate">
-                  {match.profile?.display_name || "..."}
-                </span>
-              </motion.button>
+              </div>
             ))}
           </div>
+          <div className="flex gap-2 px-4 py-3 border-t border-border/50 bg-card/50">
+            <input value={newMsg} onChange={(e) => setNewMsg(e.target.value)} onKeyDown={(e) => e.key === "Enter" && sendMessage()} placeholder={t("chat.typeMessage")} className="flex-1 bg-muted rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-1 focus:ring-love-pink/50" />
+            <button onClick={sendMessage} disabled={!newMsg.trim() || sending} className="w-10 h-10 rounded-xl gradient-love flex items-center justify-center disabled:opacity-50"><Send className="w-4 h-4 text-white" /></button>
+          </div>
         </div>
-      )}
+      );
+    }
 
-      <div className="flex-1">
-        <h3 className="text-sm font-medium text-muted-foreground mb-3">Messages</h3>
+    if (loading) {
+      return (<div className="flex-1 flex items-center justify-center pt-20"><div className="w-10 h-10 border-3 border-love-pink/30 border-t-love-pink rounded-full animate-spin" /></div>);
+    }
 
-        {conversations.length === 0 && newMatches.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
-              <Heart className="w-8 h-8 text-muted-foreground" />
-            </div>
-            <h4 className="font-semibold mb-1">No matches yet</h4>
-            <p className="text-sm text-muted-foreground">Keep swiping to find your people</p>
+    return (
+      <div className="flex flex-col pt-4 px-4">
+        <div className="mb-5 pt-2">
+          <h2 className="text-2xl font-bold">{t("matches.title")}</h2>
+          <p className="text-sm text-muted-foreground">{t("matches.subtitle")}</p>
+        </div>
+
+        {matches.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center pt-20">
+            <Heart className="w-16 h-16 text-muted-foreground/20 mb-4" />
+            <h3 className="text-lg font-semibold mb-1">{t("matches.noMatches")}</h3>
+            <p className="text-sm text-muted-foreground">{t("matches.noMatchesSub")}</p>
           </div>
         ) : (
-          <div className="space-y-1">
-            {conversations.map((match, i) => (
-              <MatchItem
-                key={match.id}
-                match={match}
-                index={i}
-                onClick={() => setLocation(`/chat/${match.id}`)}
-              />
+          <div className="space-y-2">
+            {matches.map((match, i) => (
+              <motion.button key={match.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }} onClick={() => openChat(match)} className="w-full flex items-center gap-3 p-3 bg-card rounded-2xl border border-border/30 hover:border-love-pink/30 transition-all text-left">
+                <div className="relative">
+                  <img src={match.photos?.[0] || "/placeholder.jpg"} alt={match.display_name} className="w-14 h-14 rounded-xl object-cover" />
+                  <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-card" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h4 className="font-semibold text-sm truncate">{match.display_name}, {match.age}</h4>
+                    <Shield className="w-3 h-3 text-love-pink shrink-0" />
+                  </div>
+                  <p className="text-xs text-muted-foreground truncate">{match.city || t("matches.orbVerified")}</p>
+                </div>
+                <MessageCircle className="w-5 h-5 text-muted-foreground" />
+              </motion.button>
             ))}
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-function MatchItem({
-  match,
-  index,
-  onClick,
-}: {
-  match: MatchWithProfile;
-  index: number;
-  onClick: () => void;
-}) {
-  return (
-    <motion.button
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.03 }}
-      onClick={onClick}
-      className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-card transition-colors"
-    >
-      <div className="w-14 h-14 rounded-full overflow-hidden shrink-0 border border-border/50">
-        <img
-          src={match.profile?.photos?.[0] || "/placeholder.jpg"}
-          alt=""
-          className="w-full h-full object-cover"
-        />
-      </div>
-      <div className="flex-1 min-w-0 text-left">
-        <div className="flex items-center gap-1.5">
-          <span className="font-semibold text-sm">{match.profile?.display_name}</span>
-          <Shield className="w-3 h-3 text-love-pink" />
-        </div>
-        <p className="text-xs text-muted-foreground truncate">
-          Tap to start chatting
-        </p>
-      </div>
-      <div className="flex flex-col items-end gap-1">
-        <span className="text-[10px] text-muted-foreground">
-          {formatTime(match.last_message_at)}
-        </span>
-        <MessageCircle className="w-4 h-4 text-love-pink" />
-      </div>
-    </motion.button>
-  );
-}
+    );
+  }
+  
