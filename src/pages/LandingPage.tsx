@@ -57,14 +57,11 @@ export default function LandingPage({ onVerified }: LandingPageProps) {
       console.log("[Verify] nullifier_hash:", successPayload.nullifier_hash);
       console.log("[Verify] verification_level:", successPayload.verification_level);
 
-      const backendUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/validate-orb-proof`;
+      console.log("[Verify] Calling /api/verify...");
 
-      const res = await fetch(backendUrl, {
+      const res = await fetch("/api/verify", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           payload: successPayload,
           action: VERIFY_ACTION,
