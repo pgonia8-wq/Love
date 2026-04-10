@@ -1,13 +1,10 @@
 import { createClient } from "@supabase/supabase-js";
   import { rateLimit } from "./_rateLimit.mjs";
-  import { verifySiweMessage } from "@worldcoin/minikit-js";
-
-  if (!process.env.SUPABASE_URL) console.error("[WALLET_VERIFY] SUPABASE_URL no configurada");
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) console.error("[WALLET_VERIFY] SUPABASE_SERVICE_ROLE_KEY no configurada");
+  import { verifySiweMessage } from "@worldcoin/minikit-js/siwe";
 
   const supabase = createClient(
-    process.env.SUPABASE_URL ?? "",
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? ""
+    process.env.SUPABASE_URL || process.env.VITE_SUPABASE_ANON_KEY || "https://vdenlattnqkfurebyyfz.supabase.co",
+    process.env.SUPABASE_SERVICE_ROLE_KEY || ""
   );
 
   export default async function handler(req, res) {
@@ -43,16 +40,36 @@ import { createClient } from "@supabase/supabase-js";
       if (!validMessage.isValid) {
         return res.status(401).json({ success: false, error: "Firma SIWE inválida" });
       }
+
+      const walletAddress = validMessage.siweMessageData?.address || payload.address;
+
+      const { data: existing } = await supabase
+        .from("users")
+        .select("*")
+        .eq("wallet_address", walletAddress)
+        .maybeSingle();
+
+      if (existing) {
+        await supabase
+          .from("users")
+          .update({ updated_at: new Date().toISOString() })
+          .eq("wallet_address", walletAddress);
+
+        return res.status(200).json({
+          success: true,
+          wallet_address: walletAddress,
+          reused: true,
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        wallet_address: walletAddress,
+        new_session: true,
+      });
     } catch (err) {
-      console.error("[WALLET_VERIFY] verifySiweMessage error:", err.message);
-      return res.status(401).json({ success: false, error: "Error verificando firma SIWE: " + err.message });
+      console.error("[WALLET_VERIFY] Error:", err.message);
+      return res.status(401).json({ success: false, error: "Error de verificación SIWE" });
     }
-
-    const verifiedAddress = payload.address;
-
-    return res.status(200).json({
-      success: true,
-      address: verifiedAddress,
-    });
   }
   
