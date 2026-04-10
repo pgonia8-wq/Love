@@ -1,7 +1,8 @@
 import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
+import { VERIFY_ACTION, WORLD_APP_ID } from "@/lib/constants";
 import type { User, Profile } from "@/types";
-import { MiniKit } from "@worldcoin/minikit-js";
+import { MiniKit, type ISuccessResult } from "@worldcoin/minikit-js";
 
 interface AuthState {
   user: User | null;
@@ -24,12 +25,10 @@ export function useAuth() {
     try {
       const storedUserId = localStorage.getItem("hlove_user_id");
       if (!storedUserId) {
-        if (MiniKit.isInstalled()) {
-          const mkWallet = MiniKit.user?.walletAddress;
-          if (mkWallet) {
-            localStorage.setItem("hlove_user_id", mkWallet);
-            return checkExistingSession();
-          }
+        const mkWallet = (MiniKit as any).walletAddress;
+        if (mkWallet) {
+          localStorage.setItem("hlove_user_id", mkWallet);
+          return checkExistingSession();
         }
         setState((prev) => ({ ...prev, isLoading: false }));
         return;
@@ -83,52 +82,38 @@ export function useAuth() {
         return false;
       }
 
-      const isOrbVerified = MiniKit.user?.verificationStatus?.isOrbVerified;
-      if (!isOrbVerified) {
+      const verifyPayload = {
+        action: VERIFY_ACTION,
+        verification_level: "orb" as any,
+      };
+
+      const { finalPayload } = await MiniKit.commandsAsync.verify(verifyPayload);
+
+      if (finalPayload.status === "error") {
         setState((prev) => ({
           ...prev,
           isLoading: false,
-          error: "Se requiere verificación Orb. Verifica tu identidad en World App.",
+          error: "Verificación cancelada o fallida",
         }));
         return false;
       }
 
-      const nonceRes = await fetch("/api/nonce");
-      const { nonce } = await nonceRes.json();
+      const successPayload = finalPayload as ISuccessResult;
+      const walletAddress = (MiniKit as any).walletAddress || "";
 
-      const result = await MiniKit.walletAuth({
-        nonce,
-        statement: "Iniciar sesión en H Love",
-        expirationTime: new Date(Date.now() + 1000 * 60 * 60),
-      });
-
-      if (result.executedWith === "fallback") {
-        setState((prev) => ({
-          ...prev,
-          isLoading: false,
-          error: "Autenticación cancelada",
-        }));
-        return false;
-      }
-
-      const { address, message, signature } = result.data;
-
-      const verifyResponse = await fetch("/api/verify", {
+      const res = await fetch("/api/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          wallet_address: address,
-          message,
-          signature,
-          nonce,
-          username: MiniKit.user?.username || "",
-          is_orb_verified: true,
+          payload: successPayload,
+          action: VERIFY_ACTION,
+          wallet_address: walletAddress,
         }),
       });
 
-      const data = await verifyResponse.json();
+      const data = await res.json();
 
-      if (!verifyResponse.ok || !data.success) {
+      if (!res.ok || !data.success) {
         setState((prev) => ({
           ...prev,
           isLoading: false,
@@ -137,18 +122,19 @@ export function useAuth() {
         return false;
       }
 
-      localStorage.setItem("hlove_user_id", address);
+      const userId = data.wallet_address || walletAddress;
+      localStorage.setItem("hlove_user_id", userId);
 
       const { data: profile } = await supabase
         .from("profiles")
         .select("*")
-        .eq("user_id", address)
+        .eq("user_id", userId)
         .maybeSingle();
 
       const { data: user } = await supabase
         .from("users")
         .select("*")
-        .eq("wallet_address", address)
+        .eq("wallet_address", userId)
         .single();
 
       setState({
