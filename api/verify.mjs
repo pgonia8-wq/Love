@@ -12,39 +12,51 @@ import { createClient } from "@supabase/supabase-js";
       const { payload, action, app_id } = req.body;
 
       console.log("[verify] action:", action, "app_id:", app_id);
+      console.log("[verify] payload keys:", Object.keys(payload || {}));
 
       if (!payload || !payload.nullifier_hash || !payload.proof || !payload.merkle_root) {
         return res.status(400).json({ success: false, error: "Missing verification data" });
       }
 
-      if (payload.verification_level !== "orb") {
-        return res.status(400).json({ success: false, error: "Only Orb verification accepted" });
-      }
-
-      const verifyRes = await fetch(
-        `https://developer.worldcoin.org/api/v2/verify/${app_id}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            nullifier_hash: payload.nullifier_hash,
+      const verifyBody = {
+        protocol_version: "3.0",
+        nonce: payload.nullifier_hash,
+        action: action,
+        responses: [
+          {
+            identifier: "orb",
             merkle_root: payload.merkle_root,
+            nullifier: payload.nullifier_hash,
             proof: payload.proof,
-            verification_level: payload.verification_level,
-            action,
-          }),
-        }
-      );
+            signal_hash: "0x00c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a4",
+          },
+        ],
+      };
+
+      const verifyUrl = `https://developer.world.org/api/v4/verify/${app_id}`;
+      console.log("[verify] Calling:", verifyUrl);
+      console.log("[verify] Body:", JSON.stringify(verifyBody));
+
+      const verifyRes = await fetch(verifyUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(verifyBody),
+      });
 
       const verifyData = await verifyRes.json();
-      console.log("[verify] Worldcoin:", verifyRes.status, JSON.stringify(verifyData));
+      console.log("[verify] World ID status:", verifyRes.status);
+      console.log("[verify] World ID response:", JSON.stringify(verifyData));
 
-      if (!verifyRes.ok) {
+      if (!verifyRes.ok || !verifyData.success) {
+        const errorDetail = verifyData.detail || verifyData.results?.[0]?.detail || "Invalid proof";
         return res.status(400).json({
           success: false,
-          error: verifyData.detail || verifyData.message || "Invalid proof",
+          error: errorDetail,
+          worldid_response: verifyData,
         });
       }
+
+      console.log("[verify] Proof verified successfully!");
 
       const supabaseUrl = process.env.VITE_SUPABASE_URL;
       const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
