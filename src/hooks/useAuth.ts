@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { VERIFY_ACTION, WORLD_APP_ID } from "@/lib/constants";
 import type { User, Profile } from "@/types";
-import { MiniKit, VerificationLevel } from "@worldcoin/minikit-js";
+import { MiniKit } from "@worldcoin/minikit-js";
 
 interface AuthState {
   user: User | null;
@@ -78,8 +78,6 @@ export function useAuth() {
     console.log("[Auth] WORLD_APP_ID:", WORLD_APP_ID);
     console.log("[Auth] MiniKit.isInstalled():", MiniKit.isInstalled());
     console.log("[Auth] MiniKit.walletAddress:", MiniKit.walletAddress);
-    console.log("[Auth] VerificationLevel.Orb:", VerificationLevel.Orb);
-
     try {
       if (!MiniKit.isInstalled()) {
         console.error("[Auth] MiniKit NOT installed - not inside World App");
@@ -93,7 +91,7 @@ export function useAuth() {
 
       const verifyPayload = {
         action: VERIFY_ACTION,
-        verification_level: VerificationLevel.Orb,
+        verification_level: "orb" as any,
       };
 
       console.log("[Auth] Calling MiniKit.commandsAsync.verify with:", JSON.stringify(verifyPayload));
