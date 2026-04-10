@@ -286,7 +286,7 @@ CREATE INDEX IF NOT EXISTS idx_profiles_geo ON profiles(location_lat, location_l
 CREATE INDEX IF NOT EXISTS idx_profiles_country ON profiles(country) WHERE is_active = true;
 CREATE INDEX IF NOT EXISTS idx_profiles_city ON profiles(city) WHERE is_active = true;
 CREATE INDEX IF NOT EXISTS idx_profiles_travel ON profiles(travel_active) WHERE travel_active = true;
-CREATE INDEX IF NOT EXISTS idx_profiles_boost ON profiles(boost_active_until) WHERE boost_active_until > now();
+CREATE INDEX IF NOT EXISTS idx_profiles_boost ON profiles(boost_active_until) WHERE boost_active_until IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_profiles_online ON profiles(is_online) WHERE is_online = true;
 CREATE INDEX IF NOT EXISTS idx_blocks_blocker ON blocks(blocker_id);
 CREATE INDEX IF NOT EXISTS idx_blocks_blocked ON blocks(blocked_id);
