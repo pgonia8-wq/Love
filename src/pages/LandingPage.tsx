@@ -2,20 +2,94 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Shield, Heart, Sparkles, Users, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  MiniKit,
+  VerificationLevel,
+  type ISuccessResult,
+} from "@worldcoin/minikit-js";
+import { VERIFY_ACTION, WORLD_APP_ID } from "@/lib/constants";
 
 interface LandingPageProps {
-  onVerify: () => Promise<boolean>;
-  isLoading: boolean;
-  error: string | null;
+  onVerified: (userId: string) => void;
 }
 
-export default function LandingPage({ onVerify, isLoading, error }: LandingPageProps) {
-  const [verifying, setVerifying] = useState(false);
+export default function LandingPage({ onVerified }: LandingPageProps) {
+  const [isPending, setIsPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleVerify = async () => {
-    setVerifying(true);
-    await onVerify();
-    setVerifying(false);
+    setIsPending(true);
+    setError(null);
+
+    console.log("[Verify] === Starting verification ===");
+    console.log("[Verify] action:", VERIFY_ACTION);
+    console.log("[Verify] app_id:", WORLD_APP_ID);
+    console.log("[Verify] MiniKit.isInstalled():", MiniKit.isInstalled());
+
+    if (!MiniKit.isInstalled()) {
+      console.error("[Verify] MiniKit not installed - not inside World App");
+      setError("Abre esta app dentro de World App");
+      setIsPending(false);
+      return;
+    }
+
+    try {
+      console.log("[Verify] Calling MiniKit.commandsAsync.verify...");
+
+      const { finalPayload } = await MiniKit.commandsAsync.verify({
+        action: VERIFY_ACTION,
+        verification_level: VerificationLevel.Orb,
+      });
+
+      console.log("[Verify] finalPayload:", JSON.stringify(finalPayload));
+
+      if (finalPayload.status === "error") {
+        console.error("[Verify] Error from World App:", JSON.stringify(finalPayload));
+        setError("Verificación cancelada o fallida");
+        setIsPending(false);
+        return;
+      }
+
+      const successPayload = finalPayload as ISuccessResult;
+
+      console.log("[Verify] Proof received, sending to backend...");
+      console.log("[Verify] merkle_root:", successPayload.merkle_root);
+      console.log("[Verify] nullifier_hash:", successPayload.nullifier_hash);
+      console.log("[Verify] verification_level:", successPayload.verification_level);
+
+      const backendUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/validate-orb-proof`;
+
+      const res = await fetch(backendUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({
+          payload: successPayload,
+          action: VERIFY_ACTION,
+          app_id: WORLD_APP_ID,
+        }),
+      });
+
+      const data = await res.json();
+      console.log("[Verify] Backend response:", JSON.stringify(data));
+
+      if (!res.ok || !data.success) {
+        setError(data.error || "Error en la verificación del servidor");
+        setIsPending(false);
+        return;
+      }
+
+      console.log("[Verify] User verified! ID:", data.user.id);
+      localStorage.setItem("hlove_user_id", data.user.id);
+      onVerified(data.user.id);
+    } catch (err) {
+      console.error("[Verify] Exception:", err);
+      setError(err instanceof Error ? err.message : "Error inesperado");
+    } finally {
+      setIsPending(false);
+    }
   };
 
   return (
@@ -94,10 +168,10 @@ export default function LandingPage({ onVerify, isLoading, error }: LandingPageP
         >
           <Button
             onClick={handleVerify}
-            disabled={isLoading || verifying}
+            disabled={isPending}
             className="w-full h-14 text-lg font-semibold gradient-love border-0 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
           >
-            {verifying || isLoading ? (
+            {isPending ? (
               <motion.div
                 animate={{ rotate: 360 }}
                 transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
