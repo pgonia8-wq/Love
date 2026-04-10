@@ -30,7 +30,7 @@ import { createClient } from "@supabase/supabase-js";
           .eq("nullifier_hash", userId)
           .maybeSingle();
 
-        return res.status(200).json({ valid: !!data?.is_verified, user: data });
+        return res.status(200).json({ valid: !!data?.is_verified, user: data, user_id: data?.id });
       } catch (err) {
         return res.status(200).json({ valid: false });
       }
@@ -71,7 +71,7 @@ import { createClient } from "@supabase/supabase-js";
         .maybeSingle();
 
       if (existing?.is_verified) {
-        return res.status(200).json({ success: true, nullifier_hash: nullifierHash, reused: true });
+        return res.status(200).json({ success: true, nullifier_hash: nullifierHash, user_id: existing.id, reused: true });
       }
     } catch (err) {
       console.warn("[VERIFY] Anti-replay check error:", err.message);
@@ -116,7 +116,7 @@ import { createClient } from "@supabase/supabase-js";
     try {
       const worldIdHash = `wid_${nullifierHash.slice(0, 16)}`;
 
-      const { error: upsertError } = await supabase
+      const { data: user, error: upsertError } = await supabase
         .from("users")
         .upsert(
           {
@@ -126,7 +126,9 @@ import { createClient } from "@supabase/supabase-js";
             updated_at: new Date().toISOString(),
           },
           { onConflict: "nullifier_hash" }
-        );
+        )
+        .select()
+        .single();
 
       if (upsertError) {
         console.error("[VERIFY] Upsert error:", upsertError.message);
@@ -137,6 +139,6 @@ import { createClient } from "@supabase/supabase-js";
       return res.status(500).json({ success: false, error: "Error al guardar usuario" });
     }
 
-    return res.status(200).json({ success: true, nullifier_hash: nullifierHash, worldcoinVerified });
+    return res.status(200).json({ success: true, nullifier_hash: nullifierHash, user_id: user.id, worldcoinVerified });
   }
   
