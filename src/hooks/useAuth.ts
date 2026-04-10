@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { VERIFY_ACTION, WORLD_APP_ID } from "@/lib/constants";
+import { VERIFY_ACTION } from "@/lib/constants";
 import type { User, Profile } from "@/types";
-import { MiniKit, type ISuccessResult } from "@worldcoin/minikit-js";
+import { MiniKit, type ISuccessResult, VerificationLevel } from "@worldcoin/minikit-js";
 
 interface AuthState {
   user: User | null;
@@ -24,12 +24,9 @@ export function useAuth() {
   const checkExistingSession = useCallback(async () => {
     try {
       const storedUserId = localStorage.getItem("hlove_user_id");
+      console.log("[useAuth] checkExistingSession, storedUserId:", storedUserId);
+
       if (!storedUserId) {
-        const mkWallet = (MiniKit as any).walletAddress;
-        if (mkWallet) {
-          localStorage.setItem("hlove_user_id", mkWallet);
-          return checkExistingSession();
-        }
         setState((prev) => ({ ...prev, isLoading: false }));
         return;
       }
@@ -37,10 +34,13 @@ export function useAuth() {
       const { data: user, error: userError } = await supabase
         .from("users")
         .select("*")
-        .eq("wallet_address", storedUserId)
+        .or(`wallet_address.eq.${storedUserId},nullifier_hash.eq.${storedUserId}`)
         .maybeSingle();
 
+      console.log("[useAuth] user lookup result:", !!user, "error:", userError?.message);
+
       if (userError || !user) {
+        console.log("[useAuth] No user found, clearing session");
         localStorage.removeItem("hlove_user_id");
         setState((prev) => ({ ...prev, isLoading: false }));
         return;
@@ -52,6 +52,8 @@ export function useAuth() {
         .eq("user_id", storedUserId)
         .maybeSingle();
 
+      console.log("[useAuth] profile loaded:", !!profile);
+
       setState({
         user,
         profile,
@@ -60,7 +62,7 @@ export function useAuth() {
         error: null,
       });
     } catch (err) {
-      console.error("[Auth] Session check error:", err);
+      console.error("[useAuth] Session check error:", err);
       setState((prev) => ({ ...prev, isLoading: false }));
     }
   }, []);
@@ -74,6 +76,7 @@ export function useAuth() {
 
     try {
       if (!MiniKit.isInstalled()) {
+        console.error("[useAuth] MiniKit not installed");
         setState((prev) => ({
           ...prev,
           isLoading: false,
@@ -82,25 +85,32 @@ export function useAuth() {
         return false;
       }
 
+      console.log("[useAuth] Calling MiniKit.commandsAsync.verify with action:", VERIFY_ACTION);
       const verifyPayload = {
         action: VERIFY_ACTION,
-        verification_level: "orb" as any,
+        verification_level: VerificationLevel.Orb,
       };
 
       const { finalPayload } = await MiniKit.commandsAsync.verify(verifyPayload);
+      console.log("[useAuth] verify result status:", finalPayload?.status);
 
       if (finalPayload.status === "error") {
+        console.error("[useAuth] Verification failed:", JSON.stringify(finalPayload));
         setState((prev) => ({
           ...prev,
           isLoading: false,
-          error: "Verificación cancelada o fallida",
+          error: "Verificacion cancelada o fallida",
         }));
         return false;
       }
 
       const successPayload = finalPayload as ISuccessResult;
       const walletAddress = (MiniKit as any).walletAddress || "";
+      const nullifierHash = successPayload.nullifier_hash;
+      console.log("[useAuth] nullifier_hash:", nullifierHash);
+      console.log("[useAuth] walletAddress:", walletAddress);
 
+      console.log("[useAuth] Sending proof to backend /api/verify...");
       const res = await fetch("/api/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -108,22 +118,32 @@ export function useAuth() {
           payload: successPayload,
           action: VERIFY_ACTION,
           wallet_address: walletAddress,
+          username: (MiniKit as any).user?.username || "",
         }),
       });
 
       const data = await res.json();
+      console.log("[useAuth] /api/verify response:", JSON.stringify(data));
 
       if (!res.ok || !data.success) {
+        console.error("[useAuth] Backend rejected:", data.error);
         setState((prev) => ({
           ...prev,
           isLoading: false,
-          error: data.error || "Error en la verificación",
+          error: data.error || "Error en la verificacion",
         }));
         return false;
       }
 
-      const userId = data.wallet_address || walletAddress;
+      const userId = data.nullifier_hash || data.wallet_address || walletAddress;
+      console.log("[useAuth] Verification SUCCESS, userId:", userId);
       localStorage.setItem("hlove_user_id", userId);
+
+      const { data: user } = await supabase
+        .from("users")
+        .select("*")
+        .or(`wallet_address.eq.${userId},nullifier_hash.eq.${userId}`)
+        .maybeSingle();
 
       const { data: profile } = await supabase
         .from("profiles")
@@ -131,11 +151,7 @@ export function useAuth() {
         .eq("user_id", userId)
         .maybeSingle();
 
-      const { data: user } = await supabase
-        .from("users")
-        .select("*")
-        .eq("wallet_address", userId)
-        .single();
+      console.log("[useAuth] Post-verify user:", !!user, "profile:", !!profile);
 
       setState({
         user: user || null,
@@ -147,11 +163,11 @@ export function useAuth() {
 
       return true;
     } catch (err) {
-      console.error("[Auth] Exception:", err);
+      console.error("[useAuth] Exception:", err);
       setState((prev) => ({
         ...prev,
         isLoading: false,
-        error: err instanceof Error ? err.message : "Error de verificación",
+        error: err instanceof Error ? err.message : "Error de verificacion",
       }));
       return false;
     }
@@ -161,11 +177,12 @@ export function useAuth() {
     async (updates: Partial<Profile>) => {
       if (!state.user) return;
 
+      const userId = state.user.nullifier_hash || state.user.wallet_address;
       const { data, error } = await supabase
         .from("profiles")
         .upsert(
           {
-            user_id: state.user.wallet_address,
+            user_id: userId,
             ...updates,
             updated_at: new Date().toISOString(),
           },
@@ -184,6 +201,7 @@ export function useAuth() {
   );
 
   const logout = useCallback(() => {
+    console.log("[useAuth] Logging out");
     localStorage.removeItem("hlove_user_id");
     setState({
       user: null,
