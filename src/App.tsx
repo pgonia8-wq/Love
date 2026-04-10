@@ -14,6 +14,7 @@ import EventsPage from "@/pages/EventsPage";
 import ProfilePage from "@/pages/ProfilePage";
 import WalletPage from "@/pages/WalletPage";
 import type { User as UserType, Profile } from "@/types";
+import { I18nProvider } from "@/lib/i18n";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30000, retry: 1 } },
@@ -97,7 +98,7 @@ function AppContent() {
       }
 
       if (MiniKit.isInstalled()) {
-        const mkWallet = MiniKit.user?.walletAddress;
+        const mkWallet = (MiniKit as any).walletAddress;
         if (mkWallet) {
           localStorage.setItem("hlove_user_id", mkWallet);
           const found = await loadSession(mkWallet);
@@ -181,9 +182,11 @@ function AppContent() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-        <AppContent />
-      </WouterRouter>
+      <I18nProvider>
+        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+          <AppContent />
+        </WouterRouter>
+      </I18nProvider>
     </QueryClientProvider>
   );
 }
