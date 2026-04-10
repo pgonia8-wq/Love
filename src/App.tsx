@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
   import { Heart, Calendar, User, Flame } from "lucide-react";
   import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
   import { I18nProvider, LanguageSelector, useI18n } from "@/lib/i18n";
+  import { useGeolocation } from "@/hooks/useGeolocation";
   import LandingPage from "@/pages/LandingPage";
   import OnboardingPage from "@/pages/OnboardingPage";
   import SwipePage from "@/pages/SwipePage";
@@ -18,6 +19,7 @@ import { useState, useEffect } from "react";
 
   function AppContent() {
     const { t } = useI18n();
+    const { position, updateUserLocation } = useGeolocation();
     const [walletAddress, setWalletAddress] = useState<string | null>(null);
     const [username, setUsername] = useState<string | null>(null);
     const [userRecord, setUserRecord] = useState<UserType | null>(null);
@@ -29,58 +31,43 @@ import { useState, useEffect } from "react";
 
     useEffect(() => {
       const init = async () => {
-        console.log("[App] Init started");
         try {
           if (!MiniKit.isInstalled()) {
             await new Promise<void>((resolve) => {
               let attempts = 0;
-              const interval = setInterval(() => {
-                attempts++;
-                if (MiniKit.isInstalled() || attempts > 20) { clearInterval(interval); resolve(); }
-              }, 250);
+              const interval = setInterval(() => { attempts++; if (MiniKit.isInstalled() || attempts > 20) { clearInterval(interval); resolve(); } }, 250);
             });
           }
-          console.log("[App] MiniKit installed:", MiniKit.isInstalled());
         } catch (e) { console.warn("[App] MiniKit init:", e); }
 
         const storedWallet = localStorage.getItem("hlove_wallet");
         if (storedWallet) {
-          try {
-            const checkRes = await fetch("/api/verify?wallet=" + encodeURIComponent(storedWallet));
-            if (checkRes.ok) {
-              const checkData = await checkRes.json();
-              if (checkData.valid) {
-                setWalletAddress(storedWallet);
-                setUsername(localStorage.getItem("hlove_username") || checkData.user?.username || null);
-                setVerified(true);
-                await loadUserAndProfile(storedWallet);
-              } else {
-                localStorage.removeItem("hlove_wallet");
-                localStorage.removeItem("hlove_nullifier");
-                localStorage.removeItem("hlove_username");
-              }
-            } else {
-              setWalletAddress(storedWallet);
-              setVerified(true);
-              await loadUserAndProfile(storedWallet);
-            }
-          } catch (e) {
-            setWalletAddress(storedWallet);
-            setVerified(true);
-            await loadUserAndProfile(storedWallet);
-          }
+          setWalletAddress(storedWallet);
+          setUsername(localStorage.getItem("hlove_username") || null);
+          setVerified(true);
+          await loadUserAndProfile(storedWallet);
         }
         setLoading(false);
       };
       init();
     }, []);
 
+    useEffect(() => {
+      if (walletAddress && position) {
+        updateUserLocation(walletAddress);
+        const interval = setInterval(() => updateUserLocation(walletAddress), 5 * 60 * 1000);
+        return () => clearInterval(interval);
+      }
+    }, [walletAddress, position]);
+
     const loadUserAndProfile = async (wallet: string) => {
       try {
-        const { data: userData } = await supabase.from("users").select("*").eq("wallet_address", wallet).maybeSingle();
+        const [{ data: userData }, { data: profileData }] = await Promise.all([
+          supabase.from("users").select("*").eq("wallet_address", wallet).maybeSingle(),
+          supabase.from("profiles").select("*").eq("user_id", wallet).maybeSingle(),
+        ]);
         if (userData) setUserRecord(userData as UserType);
-        const { data: profileData } = await supabase.from("profiles").select("*").eq("user_id", wallet).maybeSingle();
-        if (profileData) { setProfile(profileData); console.log("[App] Profile loaded:", profileData.display_name); }
+        if (profileData) setProfile(profileData);
       } catch (err) { console.warn("[App] Load error:", err); }
     };
 
