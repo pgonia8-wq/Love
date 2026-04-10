@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
-import { VERIFY_ACTION, WORLD_APP_ID } from "@/lib/constants";
 import type { User, Profile } from "@/types";
 import { MiniKit } from "@worldcoin/minikit-js";
 
@@ -25,21 +24,24 @@ export function useAuth() {
     try {
       const storedUserId = localStorage.getItem("hlove_user_id");
       if (!storedUserId) {
-        console.log("[Auth] No stored session found");
+        if (MiniKit.isInstalled()) {
+          const mkWallet = MiniKit.user?.walletAddress;
+          if (mkWallet) {
+            localStorage.setItem("hlove_user_id", mkWallet);
+            return checkExistingSession();
+          }
+        }
         setState((prev) => ({ ...prev, isLoading: false }));
         return;
       }
 
-      console.log("[Auth] Found stored userId:", storedUserId);
-
       const { data: user, error: userError } = await supabase
         .from("users")
         .select("*")
-        .eq("id", storedUserId)
-        .single();
+        .eq("wallet_address", storedUserId)
+        .maybeSingle();
 
       if (userError || !user) {
-        console.log("[Auth] Stored user not found in DB, clearing", userError);
         localStorage.removeItem("hlove_user_id");
         setState((prev) => ({ ...prev, isLoading: false }));
         return;
@@ -48,10 +50,8 @@ export function useAuth() {
       const { data: profile } = await supabase
         .from("profiles")
         .select("*")
-        .eq("user_id", user.id)
-        .single();
-
-      console.log("[Auth] Session restored for user:", user.id, "profile:", !!profile);
+        .eq("user_id", storedUserId)
+        .maybeSingle();
 
       setState({
         user,
@@ -73,14 +73,8 @@ export function useAuth() {
   const verifyWithWorldId = useCallback(async () => {
     setState((prev) => ({ ...prev, isLoading: true, error: null }));
 
-    console.log("[Auth] === Starting World ID Verification ===");
-    console.log("[Auth] VERIFY_ACTION:", VERIFY_ACTION);
-    console.log("[Auth] WORLD_APP_ID:", WORLD_APP_ID);
-    console.log("[Auth] MiniKit.isInstalled():", MiniKit.isInstalled());
-    console.log("[Auth] MiniKit.walletAddress:", MiniKit.walletAddress);
     try {
       if (!MiniKit.isInstalled()) {
-        console.error("[Auth] MiniKit NOT installed - not inside World App");
         setState((prev) => ({
           ...prev,
           isLoading: false,
@@ -89,79 +83,76 @@ export function useAuth() {
         return false;
       }
 
-      const verifyPayload = {
-        action: VERIFY_ACTION,
-        verification_level: "orb" as any,
-      };
-
-      console.log("[Auth] Calling MiniKit.commandsAsync.verify with:", JSON.stringify(verifyPayload));
-
-      const { finalPayload } = await MiniKit.commandsAsync.verify(verifyPayload);
-
-      console.log("[Auth] Got finalPayload:", JSON.stringify(finalPayload));
-
-      if (finalPayload.status === "error") {
-        console.error("[Auth] World App returned error:", JSON.stringify(finalPayload));
+      const isOrbVerified = MiniKit.user?.verificationStatus?.isOrbVerified;
+      if (!isOrbVerified) {
         setState((prev) => ({
           ...prev,
           isLoading: false,
-          error: `Error de verificación: ${(finalPayload as any).error_code || "desconocido"}`,
+          error: "Se requiere verificación Orb. Verifica tu identidad en World App.",
         }));
         return false;
       }
 
-      console.log("[Auth] Proof received! Sending to backend...");
-      console.log("[Auth] merkle_root:", (finalPayload as any).merkle_root);
-      console.log("[Auth] nullifier_hash:", (finalPayload as any).nullifier_hash);
-      console.log("[Auth] verification_level:", (finalPayload as any).verification_level);
+      const nonceRes = await fetch("/api/nonce");
+      const { nonce } = await nonceRes.json();
 
-      const backendUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/validate-orb-proof`;
-      console.log("[Auth] Backend URL:", backendUrl);
+      const result = await MiniKit.walletAuth({
+        nonce,
+        statement: "Iniciar sesión en H Love",
+        expirationTime: new Date(Date.now() + 1000 * 60 * 60),
+      });
 
-      const verifyResponse = await fetch(backendUrl, {
+      if (result.executedWith === "fallback") {
+        setState((prev) => ({
+          ...prev,
+          isLoading: false,
+          error: "Autenticación cancelada",
+        }));
+        return false;
+      }
+
+      const { address, message, signature } = result.data;
+
+      const verifyResponse = await fetch("/api/verify", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          merkle_root: (finalPayload as any).merkle_root,
-          nullifier_hash: (finalPayload as any).nullifier_hash,
-          proof: (finalPayload as any).proof,
-          verification_level: (finalPayload as any).verification_level,
-          action: VERIFY_ACTION,
-          app_id: WORLD_APP_ID,
+          wallet_address: address,
+          message,
+          signature,
+          nonce,
+          username: MiniKit.user?.username || "",
+          is_orb_verified: true,
         }),
       });
 
       const data = await verifyResponse.json();
-      console.log("[Auth] Backend response status:", verifyResponse.status);
-      console.log("[Auth] Backend response:", JSON.stringify(data));
 
       if (!verifyResponse.ok || !data.success) {
-        console.error("[Auth] Backend validation failed:", data.error);
         setState((prev) => ({
           ...prev,
           isLoading: false,
-          error: data.error || "Fallo en la verificación del servidor",
+          error: data.error || "Error en la verificación",
         }));
         return false;
       }
 
-      console.log("[Auth] Verified! User ID:", data.user.id, "isNew:", data.isNewUser);
-
-      localStorage.setItem("hlove_user_id", data.user.id);
+      localStorage.setItem("hlove_user_id", address);
 
       const { data: profile } = await supabase
         .from("profiles")
         .select("*")
-        .eq("user_id", data.user.id)
+        .eq("user_id", address)
+        .maybeSingle();
+
+      const { data: user } = await supabase
+        .from("users")
+        .select("*")
+        .eq("wallet_address", address)
         .single();
 
-      console.log("[Auth] Profile loaded:", !!profile);
-
       setState({
-        user: data.user,
+        user: user || null,
         profile,
         isLoading: false,
         isVerified: true,
@@ -170,8 +161,7 @@ export function useAuth() {
 
       return true;
     } catch (err) {
-      console.error("[Auth] Exception during verification:", err);
-      console.error("[Auth] Error details:", JSON.stringify(err, Object.getOwnPropertyNames(err as any)));
+      console.error("[Auth] Exception:", err);
       setState((prev) => ({
         ...prev,
         isLoading: false,
@@ -189,7 +179,7 @@ export function useAuth() {
         .from("profiles")
         .upsert(
           {
-            user_id: state.user.id,
+            user_id: state.user.wallet_address,
             ...updates,
             updated_at: new Date().toISOString(),
           },
@@ -208,7 +198,6 @@ export function useAuth() {
   );
 
   const logout = useCallback(() => {
-    console.log("[Auth] Logging out");
     localStorage.removeItem("hlove_user_id");
     setState({
       user: null,
