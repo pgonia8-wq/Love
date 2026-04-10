@@ -232,6 +232,9 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
         likesInterest: "Likes {interest}",
         fromCity: "From {city}",
         revealCrush: "Like back to reveal",
+        limitedOffer: "LIMITED",
+        earlyAdopterDesc: "First 5,000 users lock in this price forever. Unlimited likes, see who liked you, 50 profiles/day & more",
+        spotsLeft: "1,643 spots left",
       },
     fomo: {
         spotlightActive: "\u00a1Hora Dorada ACTIVA!",
@@ -257,6 +260,9 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
         likesInterest: "Le gusta {interest}",
         fromCity: "De {city}",
         revealCrush: "Dale like para revelar",
+        limitedOffer: "LIMITADO",
+        earlyAdopterDesc: "Los primeros 5,000 usuarios aseguran este precio para siempre. Likes ilimitados, ve qui\u00e9n te dio like, 50 perfiles/d\u00eda y m\u00e1s",
+        spotsLeft: "1,643 lugares",
       },
 
       common: {
