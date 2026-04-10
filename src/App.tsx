@@ -1,20 +1,23 @@
 import { useState, useEffect, useRef } from "react";
   import { MiniKit } from "@worldcoin/minikit-js";
   import { Heart, MessageCircle, Calendar, User, Flame } from "lucide-react";
+  import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
   import LandingPage from "@/pages/LandingPage";
   import OnboardingPage from "@/pages/OnboardingPage";
   import SwipePage from "@/pages/SwipePage";
   import MatchesPage from "@/pages/MatchesPage";
-  import ChatPage from "@/pages/ChatPage";
   import EventsPage from "@/pages/EventsPage";
   import ProfilePage from "@/pages/ProfilePage";
   import { supabase } from "@/lib/supabase";
-  import type { Profile } from "@/types";
+  import type { Profile, User as UserType } from "@/types";
+
+  const queryClient = new QueryClient();
 
   type Tab = "swipe" | "matches" | "chat" | "events" | "profile";
 
-  function App() {
+  function AppContent() {
     const [userId, setUserId] = useState<string | null>(null);
+    const [userRecord, setUserRecord] = useState<UserType | null>(null);
     const [verified, setVerified] = useState(false);
     const [wallet, setWallet] = useState<string | null>(null);
     const [username, setUsername] = useState<string | null>(null);
@@ -63,11 +66,12 @@ import { useState, useEffect, useRef } from "react";
       try {
         const { data: userData } = await supabase
           .from("users")
-          .select("is_premium")
+          .select("*")
           .eq("nullifier_hash", uid)
           .maybeSingle();
 
         if (userData) {
+          setUserRecord(userData as UserType);
           setIsPremium(userData.is_premium || false);
         }
 
@@ -125,7 +129,6 @@ import { useState, useEffect, useRef } from "react";
             const vData = await vRes.json();
             if (vData.success) {
               setWallet(vData.address);
-              console.log("[App] Wallet:", vData.address.slice(0, 10) + "...");
             }
           }
 
@@ -137,12 +140,9 @@ import { useState, useEffect, useRef } from "react";
                 const wcData = await wcRes.json();
                 if (wcData.username) {
                   setUsername(wcData.username);
-                  console.log("[App] Username from Worldcoin API:", wcData.username);
                 }
               }
-            } catch (e) {
-              console.warn("[App] Username API error:", e);
-            }
+            } catch (e) {}
           }
         } catch (err) {
           console.error("[App] Wallet error:", err);
@@ -162,6 +162,28 @@ import { useState, useEffect, useRef } from "react";
 
     const handleOnboardingComplete = (newProfile: Profile) => {
       setProfile(newProfile);
+    };
+
+    const handleProfileUpdate = async (updates: Partial<Profile>) => {
+      if (!userId) return;
+      const { data, error } = await supabase
+        .from("profiles")
+        .update(updates)
+        .eq("user_id", userId)
+        .select()
+        .single();
+      if (!error && data) setProfile(data);
+      return { data, error };
+    };
+
+    const handleLogout = () => {
+      localStorage.removeItem("hlove_user_id");
+      setUserId(null);
+      setVerified(false);
+      setProfile(null);
+      setWallet(null);
+      setUsername(null);
+      setUserRecord(null);
     };
 
     if (loading) {
@@ -185,12 +207,11 @@ import { useState, useEffect, useRef } from "react";
       return <OnboardingPage userId={userId} onComplete={handleOnboardingComplete} />;
     }
 
-    if (!userId) return null;
+    if (!userId || !userRecord || !profile) return null;
 
     const tabs: { id: Tab; icon: typeof Heart; label: string }[] = [
       { id: "swipe", icon: Flame, label: "Discover" },
       { id: "matches", icon: Heart, label: "Matches" },
-      { id: "chat", icon: MessageCircle, label: "Chat" },
       { id: "events", icon: Calendar, label: "Events" },
       { id: "profile", icon: User, label: "Profile" },
     ];
@@ -200,20 +221,18 @@ import { useState, useEffect, useRef } from "react";
         <div className="flex-1 overflow-y-auto pb-20">
           {activeTab === "swipe" && <SwipePage userId={userId} isPremium={isPremium} />}
           {activeTab === "matches" && <MatchesPage userId={userId} />}
-          {activeTab === "chat" && <ChatPage userId={userId} />}
-          {activeTab === "events" && <EventsPage userId={userId} isPremium={isPremium} />}
+          {activeTab === "events" && <EventsPage userId={userId} />}
           {activeTab === "profile" && (
             <ProfilePage
-              userId={userId}
-              profile={profile!}
-              username={username}
-              wallet={wallet}
-              isPremium={isPremium}
+              user={userRecord}
+              profile={profile}
+              onUpdate={handleProfileUpdate}
+              onLogout={handleLogout}
             />
           )}
         </div>
 
-        <nav className="fixed bottom-0 left-0 right-0 bg-card/95 backdrop-blur-lg border-t border-border/50 px-2 pb-safe">
+        <nav className="fixed bottom-0 left-0 right-0 bg-card/95 backdrop-blur-lg border-t border-border/50 px-2 pb-safe z-50">
           <div className="flex justify-around py-2">
             {tabs.map((tab) => (
               <button
@@ -234,6 +253,14 @@ import { useState, useEffect, useRef } from "react";
           </div>
         </nav>
       </div>
+    );
+  }
+
+  function App() {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <AppContent />
+      </QueryClientProvider>
     );
   }
 
