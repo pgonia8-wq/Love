@@ -1,8 +1,6 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
-import { MiniKit } from "@worldcoin/minikit-js";
-import { Tokens } from "@worldcoin/minikit-js/commands";
 import {
   PLATFORM_FEE_PERCENT,
   PREMIUM_MONTHLY_PRICE,
@@ -32,32 +30,37 @@ export function usePayments(userId: string | undefined) {
       const amount =
         paymentType === "event_ticket" ? 0 : PRICES[paymentType];
 
-      if (!MiniKit.isInstalled()) {
+      const MiniKitModule = await import("@worldcoin/minikit-js");
+      const MK = MiniKitModule.MiniKit;
+
+      if (!MK.isInstalled()) {
         throw new Error("Please open this app inside World App");
       }
 
       const feeAmount = amount * PLATFORM_FEE_PERCENT;
       const recipientAmount = amount - feeAmount;
 
-      const tokenSymbol = currency === "WLD" ? Tokens.WLD : Tokens.USDC;
-
-      const result = await MiniKit.pay({
+      const paymentPayload = {
         reference: `hlove_${paymentType}_${Date.now()}`,
         to: PAYMENT_ADDRESS,
         tokens: [
           {
-            symbol: tokenSymbol,
+            symbol: currency as any,
             token_amount: String(Math.round(recipientAmount * 1e6) / 1e6),
           },
         ],
         description: `H Love ${paymentType.replace("_", " ")}`,
-      });
+      };
 
-      if (result.executedWith === "fallback" || !result.data) {
+      const result = await MK.commandsAsync.pay(paymentPayload as any);
+
+      if (!result || !result.finalPayload) {
         throw new Error("Payment cancelled");
       }
 
-      const txId = (result.data as any).transaction_id || `hlove_${paymentType}_${Date.now()}`;
+      const txId =
+        (result.finalPayload as any).transaction_id ||
+        paymentPayload.reference;
 
       const confirmRes = await fetch("/api/confirm-payment", {
         method: "POST",
