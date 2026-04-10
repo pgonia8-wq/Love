@@ -1,223 +1,132 @@
-import { useState, useEffect, useCallback } from "react";
-import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AnimatePresence, motion } from "framer-motion";
-import { Heart, Users, Calendar, User, Crown } from "lucide-react";
-import { supabase } from "@/lib/supabase";
-import LandingPage from "@/pages/LandingPage";
-import OnboardingPage from "@/pages/OnboardingPage";
-import SwipePage from "@/pages/SwipePage";
-import MatchesPage from "@/pages/MatchesPage";
-import ChatPage from "@/pages/ChatPage";
-import EventsPage from "@/pages/EventsPage";
-import ProfilePage from "@/pages/ProfilePage";
-import WalletPage from "@/pages/WalletPage";
-import type { User as UserType, Profile } from "@/types";
+import { useState, useEffect, useRef } from "react";
+  import { MiniKit } from "@worldcoin/minikit-js";
+  import LandingPage from "@/pages/LandingPage";
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 30000,
-      retry: 1,
-    },
-  },
-});
+  function App() {
+    const [userId, setUserId] = useState<string | null>(null);
+    const [verified, setVerified] = useState(false);
+    const [wallet, setWallet] = useState<string | null>(null);
+    const [loading, setLoading] = useState(true);
+    const walletLoading = useRef(false);
 
-function NavBar() {
-  const [location, setLocation] = useLocation();
+    useEffect(() => {
+      const init = async () => {
+        console.log("[App] Init started");
+        const storedId = localStorage.getItem("hlove_user_id");
+        console.log("[App] stored userId:", storedId ? storedId.slice(0, 12) + "..." : "null");
 
-  const tabs = [
-    { path: "/", icon: Heart, label: "Discover" },
-    { path: "/matches", icon: Users, label: "Matches" },
-    { path: "/events", icon: Calendar, label: "Events" },
-    { path: "/wallet", icon: Crown, label: "Premium" },
-    { path: "/profile", icon: User, label: "Profile" },
-  ];
+        if (storedId) {
+          try {
+            const checkRes = await fetch(`/api/verify?userId=${storedId}`);
+            if (checkRes.ok) {
+              const checkData = await checkRes.json();
+              console.log("[App] verify check:", JSON.stringify(checkData));
+              if (checkData.valid) {
+                setUserId(storedId);
+                setVerified(true);
+                console.log("[App] ✅ Restored session");
+              } else {
+                console.log("[App] ❌ Stored userId invalid");
+                localStorage.removeItem("hlove_user_id");
+              }
+            } else {
+              setUserId(storedId);
+              setVerified(true);
+            }
+          } catch (e) {
+            setUserId(storedId);
+            setVerified(true);
+          }
+        }
 
-  const activePath = location === "/" ? "/" : "/" + location.split("/")[1];
+        setLoading(false);
+      };
 
-  return (
-    <div className="flex items-center justify-around py-2 px-2 border-t border-border/30 bg-card/50 backdrop-blur-xl">
-      {tabs.map((tab) => {
-        const isActive = activePath === tab.path;
-        return (
-          <button
-            key={tab.path}
-            onClick={() => setLocation(tab.path)}
-            className="relative flex flex-col items-center gap-0.5 py-1.5 px-3"
-          >
-            {isActive && (
-              <motion.div
-                layoutId="nav-indicator"
-                className="absolute -top-0.5 w-8 h-0.5 gradient-love rounded-full"
-                transition={{ type: "spring", stiffness: 400, damping: 30 }}
-              />
-            )}
-            <tab.icon
-              className={`w-5 h-5 transition-colors ${
-                isActive ? "text-love-pink" : "text-muted-foreground"
-              }`}
-              fill={isActive && tab.icon === Heart ? "currentColor" : "none"}
-            />
-            <span
-              className={`text-[10px] transition-colors ${
-                isActive ? "text-love-pink font-medium" : "text-muted-foreground"
-              }`}
-            >
-              {tab.label}
-            </span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
+      init();
+    }, []);
 
-function AppContent() {
-  const [user, setUser] = useState<UserType | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+    useEffect(() => {
+      const loadWallet = async () => {
+        if (!verified || wallet || !MiniKit.isInstalled() || walletLoading.current) return;
+        walletLoading.current = true;
 
-  const [location] = useLocation();
+        try {
+          console.log("[App] Fetching /api/nonce...");
+          const nonceRes = await fetch("/api/nonce");
+          if (!nonceRes.ok) throw new Error("No se pudo obtener nonce");
+          const { nonce } = await nonceRes.json();
+          console.log("[App] Nonce:", nonce?.slice(0, 8) + "...");
 
-  const loadSession = useCallback(async (userId: string) => {
-    console.log("[App] Loading session for userId:", userId);
-    const { data: userData } = await supabase
-      .from("users")
-      .select("*")
-      .eq("id", userId)
-      .single();
+          console.log("[App] Calling walletAuth...");
+          const auth = await MiniKit.commandsAsync.walletAuth({
+            nonce,
+            requestId: "wallet-auth-" + Date.now(),
+            expirationTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+            notBefore: new Date(Date.now() - 60 * 1000),
+            statement: "Autenticar wallet para H Love",
+          });
 
-    if (!userData) {
-      console.log("[App] User not found, clearing session");
-      localStorage.removeItem("hlove_user_id");
-      setIsLoading(false);
-      return;
-    }
+          const payload = auth?.finalPayload;
 
-    const { data: profileData } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("user_id", userId)
-      .single();
+          if (payload?.status === "error") {
+            console.warn("[App] WalletAuth error:", JSON.stringify(payload));
+          } else if (payload?.address && payload?.message && payload?.signature) {
+            console.log("[App] WalletAuth success, verifying...");
+            const vRes = await fetch("/api/walletVerify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ payload, nonce, userId }),
+            });
+            const vData = await vRes.json();
+            console.log("[App] walletVerify:", JSON.stringify(vData));
+            if (vData.success) {
+              setWallet(vData.address);
+              console.log("[App] ✅ Wallet:", vData.address.slice(0, 10) + "...");
+            }
+          }
+        } catch (err) {
+          console.error("[App] Wallet error:", err);
+        } finally {
+          walletLoading.current = false;
+        }
+      };
 
-    console.log("[App] Session loaded. user:", userData.id, "profile:", !!profileData);
-    setUser(userData);
-    setProfile(profileData);
-    setIsLoading(false);
-  }, []);
+      loadWallet();
+    }, [verified, wallet]);
 
-  useEffect(() => {
-    const storedUserId = localStorage.getItem("hlove_user_id");
-    if (storedUserId) {
-      loadSession(storedUserId);
-    } else {
-      setIsLoading(false);
-    }
-  }, [loadSession]);
+    const handleVerified = (id: string) => {
+      setUserId(id);
+      setVerified(true);
+    };
 
-  const handleVerified = (userId: string) => {
-    loadSession(userId);
-  };
-
-  const handleProfileUpdate = async (updates: Partial<Profile>) => {
-    if (!user) return;
-    const { data, error } = await supabase
-      .from("profiles")
-      .upsert(
-        { user_id: user.id, ...updates, updated_at: new Date().toISOString() },
-        { onConflict: "user_id" }
-      )
-      .select()
-      .single();
-    if (!error && data) setProfile(data);
-    return { data, error };
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem("hlove_user_id");
-    setUser(null);
-    setProfile(null);
-  };
-
-  const showNav =
-    user && profile && !location.startsWith("/chat/") && !location.startsWith("/onboarding");
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.8 }}
-          animate={{ opacity: 1, scale: 1 }}
-          className="flex flex-col items-center"
-        >
-          <div className="w-16 h-16 rounded-2xl gradient-love flex items-center justify-center mb-4 animate-pulse-glow">
-            <Heart className="w-8 h-8 text-white" fill="white" />
-          </div>
+    if (loading) {
+      return (
+        <div className="min-h-screen flex items-center justify-center">
           <div className="w-8 h-8 border-2 border-love-pink/30 border-t-love-pink rounded-full animate-spin" />
-        </motion.div>
-      </div>
-    );
-  }
+        </div>
+      );
+    }
 
-  if (!user) {
-    return <LandingPage onVerified={handleVerified} />;
-  }
+    if (!verified) {
+      return <LandingPage onVerified={handleVerified} />;
+    }
 
-  if (!profile) {
     return (
-      <OnboardingPage
-        userId={user.id}
-        onComplete={() => window.location.reload()}
-      />
+      <div className="min-h-screen flex flex-col items-center justify-center px-6">
+        <div className="text-center space-y-4">
+          <div className="text-6xl">💜</div>
+          <h1 className="text-3xl font-bold gradient-love-text">Welcome to H Love</h1>
+          <p className="text-muted-foreground">
+            Verified human ✓
+            {wallet && <><br />Wallet: {wallet.slice(0, 6)}...{wallet.slice(-4)}</>}
+          </p>
+          <p className="text-xs text-muted-foreground/60">
+            ID: {userId?.slice(0, 12)}...
+          </p>
+        </div>
+      </div>
     );
   }
 
-  return (
-    <div className="min-h-screen flex flex-col max-w-lg mx-auto">
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <Switch>
-          <Route path="/">
-            <SwipePage userId={user.id} isPremium={user.is_premium} />
-          </Route>
-          <Route path="/matches">
-            <MatchesPage userId={user.id} />
-          </Route>
-          <Route path="/chat/:matchId">
-            <ChatPage userId={user.id} />
-          </Route>
-          <Route path="/events">
-            <EventsPage userId={user.id} />
-          </Route>
-          <Route path="/wallet">
-            <WalletPage user={user} userId={user.id} />
-          </Route>
-          <Route path="/profile">
-            <ProfilePage
-              user={user}
-              profile={profile}
-              onUpdate={handleProfileUpdate}
-              onLogout={handleLogout}
-            />
-          </Route>
-          <Route>
-            <SwipePage userId={user.id} isPremium={user.is_premium} />
-          </Route>
-        </Switch>
-      </div>
-      {showNav && <NavBar />}
-    </div>
-  );
-}
-
-function App() {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-        <AppContent />
-      </WouterRouter>
-    </QueryClientProvider>
-  );
-}
-
-export default App;
+  export default App;
+  
