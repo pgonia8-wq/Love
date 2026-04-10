@@ -9,7 +9,6 @@ import { useState, useEffect, useRef } from "react";
   import EventsPage from "@/pages/EventsPage";
   import ProfilePage from "@/pages/ProfilePage";
   import { supabase } from "@/lib/supabase";
-  import { I18nProvider } from "@/lib/i18n";
   import type { Profile, User as UserType } from "@/types";
 
   const queryClient = new QueryClient();
@@ -32,25 +31,32 @@ import { useState, useEffect, useRef } from "react";
       const init = async () => {
         console.log("[App] Init started");
         const storedId = localStorage.getItem("hlove_user_id");
+        console.log("[App] storedId from localStorage:", storedId);
 
         if (storedId) {
           try {
-            const checkRes = await fetch(`/api/verify?userId=${storedId}`);
+            console.log("[App] Checking stored user with /api/verify?wallet=" + storedId);
+            const checkRes = await fetch("/api/verify?wallet=" + storedId);
+            console.log("[App] /api/verify GET status:", checkRes.status);
             if (checkRes.ok) {
               const checkData = await checkRes.json();
+              console.log("[App] /api/verify GET response:", JSON.stringify(checkData));
               if (checkData.valid) {
                 setUserId(storedId);
                 setVerified(true);
                 await loadProfile(storedId);
               } else {
+                console.log("[App] Stored user not valid, clearing localStorage");
                 localStorage.removeItem("hlove_user_id");
               }
             } else {
+              console.log("[App] /api/verify returned non-ok, trying loadProfile anyway");
               setUserId(storedId);
               setVerified(true);
               await loadProfile(storedId);
             }
           } catch (e) {
+            console.error("[App] Error checking stored user:", e);
             setUserId(storedId);
             setVerified(true);
             await loadProfile(storedId);
@@ -58,36 +64,58 @@ import { useState, useEffect, useRef } from "react";
         }
 
         setLoading(false);
+        console.log("[App] Init complete. verified:", !!storedId);
       };
 
       init();
     }, []);
 
     const loadProfile = async (uid: string) => {
+      console.log("[App] loadProfile called with uid:", uid);
       try {
-        const { data: userData } = await supabase
+        console.log("[App] Querying users table by wallet_address...");
+        const { data: userData, error: userErr } = await supabase
           .from("users")
           .select("*")
-          .eq("nullifier_hash", uid)
+          .eq("wallet_address", uid)
           .maybeSingle();
 
-        if (userData) {
+        console.log("[App] users query result:", JSON.stringify(userData), "error:", userErr);
+
+        if (!userData) {
+          console.log("[App] No user found by wallet_address, trying nullifier_hash...");
+          const { data: userData2 } = await supabase
+            .from("users")
+            .select("*")
+            .eq("nullifier_hash", uid)
+            .maybeSingle();
+          console.log("[App] users query by nullifier_hash:", JSON.stringify(userData2));
+          if (userData2) {
+            setUserRecord(userData2 as UserType);
+            setIsPremium(userData2.is_premium || false);
+          }
+        } else {
           setUserRecord(userData as UserType);
           setIsPremium(userData.is_premium || false);
         }
 
-        const { data: profileData } = await supabase
+        console.log("[App] Querying profiles table by user_id...");
+        const { data: profileData, error: profErr } = await supabase
           .from("profiles")
           .select("*")
           .eq("user_id", uid)
           .maybeSingle();
 
+        console.log("[App] profiles query result:", JSON.stringify(profileData), "error:", profErr);
+
         if (profileData) {
           setProfile(profileData);
           console.log("[App] Profile loaded:", profileData.display_name);
+        } else {
+          console.log("[App] No profile found for uid:", uid);
         }
       } catch (err) {
-        console.warn("[App] Error loading profile:", err);
+        console.error("[App] Error loading profile:", err);
       }
     };
 
@@ -95,9 +123,11 @@ import { useState, useEffect, useRef } from "react";
       const loadWallet = async () => {
         if (!verified || wallet || !MiniKit.isInstalled() || walletLoading.current) return;
         walletLoading.current = true;
+        console.log("[App] loadWallet started");
 
         try {
           const mkUser = (MiniKit as any).user;
+          console.log("[App] MiniKit.user:", JSON.stringify(mkUser));
           if (mkUser) {
             const u = mkUser.username || null;
             if (u) {
@@ -106,10 +136,16 @@ import { useState, useEffect, useRef } from "react";
             }
           }
 
+          console.log("[App] Fetching nonce...");
           const nonceRes = await fetch("/api/nonce");
-          if (!nonceRes.ok) throw new Error("No nonce");
+          if (!nonceRes.ok) {
+            console.error("[App] Failed to get nonce, status:", nonceRes.status);
+            throw new Error("No nonce");
+          }
           const { nonce } = await nonceRes.json();
+          console.log("[App] Got nonce:", nonce);
 
+          console.log("[App] Calling walletAuth...");
           const auth = await MiniKit.commandsAsync.walletAuth({
             nonce,
             requestId: "wallet-auth-" + Date.now(),
@@ -119,32 +155,39 @@ import { useState, useEffect, useRef } from "react";
           });
 
           const payload = auth?.finalPayload;
+          console.log("[App] walletAuth response:", JSON.stringify(payload));
 
           if (payload?.status === "error") {
             console.warn("[App] WalletAuth error:", JSON.stringify(payload));
           } else if (payload?.address && payload?.message && payload?.signature) {
+            console.log("[App] Verifying wallet with backend...");
             const vRes = await fetch("/api/walletVerify", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ payload, nonce, userId }),
             });
             const vData = await vRes.json();
+            console.log("[App] walletVerify response:", JSON.stringify(vData));
             if (vData.success) {
               setWallet(vData.address);
             }
           }
 
           const resolvedAddress = payload?.address || (MiniKit as any).walletAddress;
+          console.log("[App] resolvedAddress:", resolvedAddress);
           if (resolvedAddress && !username) {
             try {
-              const wcRes = await fetch(`https://usernames.worldcoin.org/api/v1/${resolvedAddress}`);
+              const wcRes = await fetch("https://usernames.worldcoin.org/api/v1/" + resolvedAddress);
               if (wcRes.ok) {
                 const wcData = await wcRes.json();
+                console.log("[App] WC username lookup:", JSON.stringify(wcData));
                 if (wcData.username) {
                   setUsername(wcData.username);
                 }
               }
-            } catch (e) {}
+            } catch (e) {
+              console.warn("[App] Username lookup failed:", e);
+            }
           }
         } catch (err) {
           console.error("[App] Wallet error:", err);
@@ -157,17 +200,21 @@ import { useState, useEffect, useRef } from "react";
     }, [verified, wallet]);
 
     const handleVerified = async (id: string) => {
+      console.log("[App] handleVerified called with id:", id);
       setUserId(id);
       setVerified(true);
+      localStorage.setItem("hlove_user_id", id);
       await loadProfile(id);
     };
 
     const handleOnboardingComplete = (newProfile: Profile) => {
+      console.log("[App] Onboarding complete:", newProfile.display_name);
       setProfile(newProfile);
     };
 
     const handleProfileUpdate = async (updates: Partial<Profile>) => {
       if (!userId) return;
+      console.log("[App] Updating profile:", JSON.stringify(updates));
       const { data, error } = await supabase
         .from("profiles")
         .update(updates)
@@ -179,6 +226,7 @@ import { useState, useEffect, useRef } from "react";
     };
 
     const handleLogout = () => {
+      console.log("[App] Logging out");
       localStorage.removeItem("hlove_user_id");
       setUserId(null);
       setVerified(false);
@@ -202,14 +250,19 @@ import { useState, useEffect, useRef } from "react";
     }
 
     if (!verified) {
+      console.log("[App] Rendering LandingPage (not verified)");
       return <LandingPage onVerified={handleVerified} />;
     }
 
     if (!profile && userId) {
+      console.log("[App] Rendering OnboardingPage (no profile, userId:", userId, ")");
       return <OnboardingPage userId={userId} onComplete={handleOnboardingComplete} />;
     }
 
-    if (!userId || !userRecord || !profile) return null;
+    if (!userId || !userRecord || !profile) {
+      console.log("[App] Rendering null - userId:", userId, "userRecord:", !!userRecord, "profile:", !!profile);
+      return null;
+    }
 
     const tabs: { id: Tab; icon: typeof Heart; label: string }[] = [
       { id: "swipe", icon: Flame, label: "Discover" },
@@ -219,8 +272,8 @@ import { useState, useEffect, useRef } from "react";
     ];
 
     return (
-      <div className="min-h-screen flex flex-col bg-background">
-        <div className="flex-1 overflow-y-auto pb-20">
+      <div style={{ height: "100dvh", display: "flex", flexDirection: "column", background: "#0a0a0a", maxWidth: 512, margin: "0 auto" }}>
+        <div style={{ flex: 1, minHeight: 0, position: "relative", overflow: "hidden" }}>
           {activeTab === "swipe" && <SwipePage userId={userId} isPremium={isPremium} />}
           {activeTab === "matches" && <MatchesPage userId={userId} />}
           {activeTab === "events" && <EventsPage userId={userId} />}
@@ -234,22 +287,16 @@ import { useState, useEffect, useRef } from "react";
           )}
         </div>
 
-        <nav className="fixed bottom-0 left-0 right-0 bg-card/95 backdrop-blur-lg border-t border-border/50 px-2 pb-safe z-50">
-          <div className="flex justify-around py-2">
+        <nav style={{ flexShrink: 0, background: "rgba(28,28,30,0.95)", backdropFilter: "blur(12px)", borderTop: "1px solid rgba(255,255,255,0.08)", padding: "0 8px", paddingBottom: "env(safe-area-inset-bottom, 0px)", zIndex: 50 }}>
+          <div style={{ display: "flex", justifyContent: "space-around", padding: "8px 0" }}>
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-all ${
-                  activeTab === tab.id
-                    ? "text-love-pink"
-                    : "text-muted-foreground hover:text-foreground/70"
-                }`}
+                style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "6px 12px", borderRadius: 12, background: "none", border: "none", color: activeTab === tab.id ? "#ec4899" : "#888", cursor: "pointer", transition: "color 0.2s" }}
               >
-                <tab.icon
-                  className={`w-5 h-5 ${activeTab === tab.id ? "fill-love-pink/20" : ""}`}
-                />
-                <span className="text-[10px] font-medium">{tab.label}</span>
+                <tab.icon style={{ width: 20, height: 20 }} />
+                <span style={{ fontSize: 10, fontWeight: 500 }}>{tab.label}</span>
               </button>
             ))}
           </div>
@@ -261,9 +308,7 @@ import { useState, useEffect, useRef } from "react";
   function App() {
     return (
       <QueryClientProvider client={queryClient}>
-        <I18nProvider>
-          <AppContent />
-        </I18nProvider>
+        <AppContent />
       </QueryClientProvider>
     );
   }
