@@ -1,12 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
   import { rateLimit } from "./_rateLimit.mjs";
 
-  if (!process.env.SUPABASE_URL) {
-    console.error("[VERIFY] ERROR: SUPABASE_URL no está configurada");
-  }
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    console.error("[VERIFY] ERROR: SUPABASE_SERVICE_ROLE_KEY no está configurada");
-  }
+  if (!process.env.SUPABASE_URL) console.error("[VERIFY] SUPABASE_URL no configurada");
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) console.error("[VERIFY] SUPABASE_SERVICE_ROLE_KEY no configurada");
 
   const supabase = createClient(
     process.env.SUPABASE_URL ?? "",
@@ -21,11 +17,8 @@ import { createClient } from "@supabase/supabase-js";
     res.setHeader("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-    if (req.method === "OPTIONS") {
-      return res.status(200).end();
-    }
+    if (req.method === "OPTIONS") return res.status(200).end();
 
-    // GET: check if userId is valid (same as Humans App.tsx init flow)
     if (req.method === "GET") {
       const userId = req.query?.userId;
       if (!userId) return res.status(400).json({ valid: false });
@@ -44,7 +37,7 @@ import { createClient } from "@supabase/supabase-js";
     }
 
     if (rateLimit(req, { max: 10, windowMs: 60000 }).limited) {
-      return res.status(429).json({ success: false, error: "Demasiadas solicitudes. Intenta en un minuto." });
+      return res.status(429).json({ success: false, error: "Demasiadas solicitudes." });
     }
 
     if (req.method !== "POST") {
@@ -70,7 +63,6 @@ import { createClient } from "@supabase/supabase-js";
 
     const nullifierHash = payload.nullifier_hash;
 
-    // Anti-replay: check if nullifier_hash already exists
     try {
       const { data: existing } = await supabase
         .from("users")
@@ -85,9 +77,6 @@ import { createClient } from "@supabase/supabase-js";
       console.warn("[VERIFY] Anti-replay check error:", err.message);
     }
 
-    // Verify with Worldcoin Developer Portal
-    // Following verifyOrbStatus.mjs pattern: trust MiniKit proof,
-    // accept "already_verified" as success
     let worldcoinVerified = false;
     try {
       const verifyResponse = await fetch(
@@ -116,10 +105,7 @@ import { createClient } from "@supabase/supabase-js";
         verifyData.code === "max_verifications_reached";
 
       if (!worldcoinVerified) {
-        // World App already verified the proof via MiniKit before sending it here.
-        // Re-verifying with Worldcoin API often fails because proofs are single-use.
-        // We trust World App's MiniKit verification and save directly.
-        console.warn("[VERIFY] Worldcoin API rejected, but trusting MiniKit proof:", errMsg);
+        console.warn("[VERIFY] Worldcoin API rejected, trusting MiniKit proof:", errMsg);
         worldcoinVerified = true;
       }
     } catch (err) {
@@ -127,7 +113,6 @@ import { createClient } from "@supabase/supabase-js";
       worldcoinVerified = true;
     }
 
-    // Save/update user in Supabase
     try {
       const worldIdHash = `wid_${nullifierHash.slice(0, 16)}`;
 
@@ -138,14 +123,13 @@ import { createClient } from "@supabase/supabase-js";
             nullifier_hash: nullifierHash,
             world_id_hash: worldIdHash,
             is_verified: true,
-            verification_level: "orb",
             updated_at: new Date().toISOString(),
           },
           { onConflict: "nullifier_hash" }
         );
 
       if (upsertError) {
-        console.error("[VERIFY] Error upsert:", upsertError.message);
+        console.error("[VERIFY] Upsert error:", upsertError.message);
         return res.status(500).json({ success: false, error: upsertError.message });
       }
     } catch (err) {
