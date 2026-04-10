@@ -80,10 +80,10 @@
   ALTER TABLE icebreakers ENABLE ROW LEVEL SECURITY;
   ALTER TABLE spotlight_sessions ENABLE ROW LEVEL SECURITY;
 
-  CREATE POLICY "Full access crushes" ON crushes FOR ALL USING (true);
-  CREATE POLICY "Full access weekly_top5" ON weekly_top5 FOR ALL USING (true);
-  CREATE POLICY "Full access icebreakers" ON icebreakers FOR ALL USING (true);
-  CREATE POLICY "Full access spotlight" ON spotlight_sessions FOR ALL USING (true);
+  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access crushes' AND tablename = 'crushes') THEN CREATE POLICY "Full access crushes" ON crushes FOR ALL USING (true); END IF; END $;
+  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access weekly_top5' AND tablename = 'weekly_top5') THEN CREATE POLICY "Full access weekly_top5" ON weekly_top5 FOR ALL USING (true); END IF; END $;
+  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access icebreakers' AND tablename = 'icebreakers') THEN CREATE POLICY "Full access icebreakers" ON icebreakers FOR ALL USING (true); END IF; END $;
+  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access spotlight' AND tablename = 'spotlight_sessions') THEN CREATE POLICY "Full access spotlight" ON spotlight_sessions FOR ALL USING (true); END IF; END $;
 
   -- Generate social proof for mock profiles
   UPDATE profiles SET
