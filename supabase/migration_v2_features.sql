@@ -84,10 +84,17 @@
   ALTER TABLE trust_metrics ENABLE ROW LEVEL SECURITY;
   ALTER TABLE vouches ENABLE ROW LEVEL SECURITY;
 
-  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access date_confirmations' AND tablename = 'date_confirmations') THEN CREATE POLICY "Full access date_confirmations" ON date_confirmations FOR ALL USING (true); END IF; END $;
-  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access trust_reviews' AND tablename = 'trust_reviews') THEN CREATE POLICY "Full access trust_reviews" ON trust_reviews FOR ALL USING (true); END IF; END $;
-  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access trust_metrics' AND tablename = 'trust_metrics') THEN CREATE POLICY "Full access trust_metrics" ON trust_metrics FOR ALL USING (true); END IF; END $;
-  DO $ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Full access vouches' AND tablename = 'vouches') THEN CREATE POLICY "Full access vouches" ON vouches FOR ALL USING (true); END IF; END $;
+  DROP POLICY IF EXISTS "Full access date_confirmations" ON date_confirmations;
+  CREATE POLICY "Full access date_confirmations" ON date_confirmations FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access trust_reviews" ON trust_reviews;
+  CREATE POLICY "Full access trust_reviews" ON trust_reviews FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access trust_metrics" ON trust_metrics;
+  CREATE POLICY "Full access trust_metrics" ON trust_metrics FOR ALL USING (true);
+
+  DROP POLICY IF EXISTS "Full access vouches" ON vouches;
+  CREATE POLICY "Full access vouches" ON vouches FOR ALL USING (true);
 
   -- Trust score calculation function
   CREATE OR REPLACE FUNCTION calculate_trust_score(p_user_id text)
