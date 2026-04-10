@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { VERIFY_ACTION, WORLD_APP_ID } from "@/lib/constants";
 import type { User, Profile } from "@/types";
+import { MiniKit, VerificationLevel } from "@worldcoin/minikit-js";
 
 interface AuthState {
   user: User | null;
@@ -38,7 +39,7 @@ export function useAuth() {
         .single();
 
       if (userError || !user) {
-        console.log("[Auth] Stored user not found in DB, clearing session", userError);
+        console.log("[Auth] Stored user not found in DB, clearing", userError);
         localStorage.removeItem("hlove_user_id");
         setState((prev) => ({ ...prev, isLoading: false }));
         return;
@@ -50,7 +51,7 @@ export function useAuth() {
         .eq("user_id", user.id)
         .single();
 
-      console.log("[Auth] Session restored for user:", user.id, "has profile:", !!profile);
+      console.log("[Auth] Session restored for user:", user.id, "profile:", !!profile);
 
       setState({
         user,
@@ -71,89 +72,85 @@ export function useAuth() {
 
   const verifyWithWorldId = useCallback(async () => {
     setState((prev) => ({ ...prev, isLoading: true, error: null }));
-    console.log("[Auth] Starting World ID verification...");
-    console.log("[Auth] Action:", VERIFY_ACTION);
-    console.log("[Auth] App ID:", WORLD_APP_ID);
+
+    console.log("[Auth] === Starting World ID Verification ===");
+    console.log("[Auth] VERIFY_ACTION:", VERIFY_ACTION);
+    console.log("[Auth] WORLD_APP_ID:", WORLD_APP_ID);
+    console.log("[Auth] MiniKit.isInstalled():", MiniKit.isInstalled());
+    console.log("[Auth] MiniKit.walletAddress:", MiniKit.walletAddress);
+    console.log("[Auth] VerificationLevel.Orb:", VerificationLevel.Orb);
 
     try {
-      const { MiniKit, VerificationLevel, MiniAppVerifyActionErrorPayload } = await import("@worldcoin/minikit-js");
-
-      console.log("[Auth] MiniKit imported successfully");
-      console.log("[Auth] MiniKit.isInstalled():", MiniKit.isInstalled());
-
       if (!MiniKit.isInstalled()) {
-        console.error("[Auth] MiniKit is NOT installed. User must open app inside World App.");
+        console.error("[Auth] MiniKit NOT installed - not inside World App");
         setState((prev) => ({
           ...prev,
           isLoading: false,
-          error: "Please open this app inside World App to verify your identity",
+          error: "Abre esta app dentro de World App para verificarte",
         }));
         return false;
       }
-
-      console.log("[Auth] MiniKit is installed, sending verify command...");
 
       const verifyPayload = {
         action: VERIFY_ACTION,
         verification_level: VerificationLevel.Orb,
       };
 
-      console.log("[Auth] Verify payload:", JSON.stringify(verifyPayload));
+      console.log("[Auth] Calling MiniKit.commandsAsync.verify with:", JSON.stringify(verifyPayload));
 
       const { finalPayload } = await MiniKit.commandsAsync.verify(verifyPayload);
 
-      console.log("[Auth] Verify response received:", JSON.stringify(finalPayload));
+      console.log("[Auth] Got finalPayload:", JSON.stringify(finalPayload));
 
       if (finalPayload.status === "error") {
-        const errorPayload = finalPayload as MiniAppVerifyActionErrorPayload;
-        console.error("[Auth] Verification error from World App:", JSON.stringify(errorPayload));
+        console.error("[Auth] World App returned error:", JSON.stringify(finalPayload));
         setState((prev) => ({
           ...prev,
           isLoading: false,
-          error: `Verification error: ${errorPayload.error_code || "unknown"} - Please try again`,
+          error: `Error de verificación: ${(finalPayload as any).error_code || "desconocido"}`,
         }));
         return false;
       }
 
-      console.log("[Auth] Proof received successfully, validating on backend...");
-      console.log("[Auth] merkle_root:", finalPayload.merkle_root);
-      console.log("[Auth] nullifier_hash:", finalPayload.nullifier_hash);
-      console.log("[Auth] verification_level:", finalPayload.verification_level);
+      console.log("[Auth] Proof received! Sending to backend...");
+      console.log("[Auth] merkle_root:", (finalPayload as any).merkle_root);
+      console.log("[Auth] nullifier_hash:", (finalPayload as any).nullifier_hash);
+      console.log("[Auth] verification_level:", (finalPayload as any).verification_level);
 
-      const verifyResponse = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/validate-orb-proof`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-          },
-          body: JSON.stringify({
-            merkle_root: finalPayload.merkle_root,
-            nullifier_hash: finalPayload.nullifier_hash,
-            proof: finalPayload.proof,
-            verification_level: finalPayload.verification_level,
-            action: VERIFY_ACTION,
-            app_id: WORLD_APP_ID,
-          }),
-        }
-      );
+      const backendUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/validate-orb-proof`;
+      console.log("[Auth] Backend URL:", backendUrl);
+
+      const verifyResponse = await fetch(backendUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({
+          merkle_root: (finalPayload as any).merkle_root,
+          nullifier_hash: (finalPayload as any).nullifier_hash,
+          proof: (finalPayload as any).proof,
+          verification_level: (finalPayload as any).verification_level,
+          action: VERIFY_ACTION,
+          app_id: WORLD_APP_ID,
+        }),
+      });
 
       const data = await verifyResponse.json();
-
-      console.log("[Auth] Backend validation response:", JSON.stringify(data));
+      console.log("[Auth] Backend response status:", verifyResponse.status);
+      console.log("[Auth] Backend response:", JSON.stringify(data));
 
       if (!verifyResponse.ok || !data.success) {
         console.error("[Auth] Backend validation failed:", data.error);
         setState((prev) => ({
           ...prev,
           isLoading: false,
-          error: data.error || "Verification failed on server. Please try again.",
+          error: data.error || "Fallo en la verificación del servidor",
         }));
         return false;
       }
 
-      console.log("[Auth] User verified! ID:", data.user.id, "isNew:", data.isNewUser);
+      console.log("[Auth] Verified! User ID:", data.user.id, "isNew:", data.isNewUser);
 
       localStorage.setItem("hlove_user_id", data.user.id);
 
@@ -175,12 +172,12 @@ export function useAuth() {
 
       return true;
     } catch (err) {
-      console.error("[Auth] Verification exception:", err);
-      const errorMessage = err instanceof Error ? err.message : "Verification failed";
+      console.error("[Auth] Exception during verification:", err);
+      console.error("[Auth] Error details:", JSON.stringify(err, Object.getOwnPropertyNames(err as any)));
       setState((prev) => ({
         ...prev,
         isLoading: false,
-        error: errorMessage,
+        error: err instanceof Error ? err.message : "Error de verificación",
       }));
       return false;
     }
