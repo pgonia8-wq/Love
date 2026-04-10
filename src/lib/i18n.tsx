@@ -22,7 +22,6 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
         walletAuthError: "Wallet authentication error",
         verifyCancelled: "Verification cancelled or failed",
         backendError: "Backend rejected the verification",
-        verifiedNoWallet: "Verified but wallet not found. Try again.",
       },
       onboarding: {
         step1: "Who are you?",
@@ -65,6 +64,18 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
         youAndLiked: "You and {name} liked each other",
         keepSwiping: "Keep Swiping",
         sendMessage: "Send Message",
+        away: "away",
+        online: "Online now",
+        verified: "Verified location",
+        nearby: "Nearby",
+        traveling: "Traveling",
+        filterDistance: "Max distance",
+        filterAge: "Age range",
+        filterGender: "Show me",
+        filters: "Filters",
+        applyFilters: "Apply",
+        resetFilters: "Reset",
+        peopleNearby: "people nearby",
       },
       premium: {
         unlock: "Unlock Premium",
@@ -73,9 +84,34 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
         seeWhoLiked: "See who already liked you",
         freeBoost: "1 free boost per week",
         priorityFeed: "Priority in the feed",
+        travelMode: "Travel Mode — date globally",
+        changeCountry: "Change country (once/year)",
+        noAds: "No ads, ever",
+        incognitoMode: "Incognito mode",
         upgrade: "Upgrade — 9.99 USDC/mo",
         maybeLater: "Maybe later",
         orWLD: "or pay with WLD",
+      },
+      geo: {
+        locationRequired: "Enable location to find people nearby",
+        enableLocation: "Enable Location",
+        updatingLocation: "Updating your location...",
+        locationUpdated: "Location updated",
+        country: "Country",
+        countryLocked: "Country locked for {days} more days",
+        countryChangePremium: "Only Premium can change country",
+        travelMode: "Travel Mode",
+        travelModeDesc: "Appear in another city and match with people there",
+        travelModeActive: "Currently traveling to {city}",
+        travelModePremium: "Premium feature",
+        selectDestination: "Select destination",
+        activateTravel: "Activate Travel Mode",
+        deactivateTravel: "Back to home",
+        distanceSetting: "Discovery distance",
+        nearbyCount: "{count} people within {distance}km",
+        tooFar: "Too far away",
+        passport: "H Love Passport",
+        passportDesc: "Premium can unlock 1 new country per year",
       },
       matches: {
         title: "Matches",
@@ -93,6 +129,7 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
         attending: "attending",
         youHaveTicket: "You have a ticket",
         soldOut: "Sold Out",
+        getTicket: "Get Ticket",
       },
       profile: {
         editProfile: "Edit Profile",
@@ -112,6 +149,13 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
         boostDesc: "Be seen by 10x more people for 30 minutes",
         logout: "Log Out",
         referral: "Invite friends",
+        travelMode: "Travel Mode",
+        settings: "Settings",
+        location: "Location",
+        showDistance: "Show distance to others",
+        showOnline: "Show online status",
+        distanceRange: "Discovery distance: {km}km",
+        currentLocation: "Current: {city}, {country}",
       },
       chat: {
         startConvo: "Start the conversation!",
@@ -132,6 +176,7 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
         cancel: "Cancel",
         confirm: "Confirm",
         close: "Close",
+        km: "km",
       },
     },
     es: {
@@ -153,7 +198,6 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
         walletAuthError: "Error al autenticar wallet",
         verifyCancelled: "Verificación cancelada o fallida",
         backendError: "El backend rechazó la verificación",
-        verifiedNoWallet: "Verificado pero no se encontró wallet. Intenta de nuevo.",
       },
       onboarding: {
         step1: "¿Quién eres?",
@@ -196,6 +240,18 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
         youAndLiked: "Tú y {name} se gustaron",
         keepSwiping: "Seguir deslizando",
         sendMessage: "Enviar mensaje",
+        away: "de distancia",
+        online: "En línea",
+        verified: "Ubicación verificada",
+        nearby: "Cerca",
+        traveling: "De viaje",
+        filterDistance: "Distancia máxima",
+        filterAge: "Rango de edad",
+        filterGender: "Mostrar",
+        filters: "Filtros",
+        applyFilters: "Aplicar",
+        resetFilters: "Restablecer",
+        peopleNearby: "personas cerca",
       },
       premium: {
         unlock: "Desbloquear Premium",
@@ -204,9 +260,34 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
         seeWhoLiked: "Ve quién ya te dio like",
         freeBoost: "1 boost gratis por semana",
         priorityFeed: "Prioridad en el feed",
+        travelMode: "Modo Viaje — citas globales",
+        changeCountry: "Cambiar país (1 vez/año)",
+        noAds: "Sin anuncios, nunca",
+        incognitoMode: "Modo incógnito",
         upgrade: "Upgrade — 9.99 USDC/mes",
         maybeLater: "Quizás después",
         orWLD: "o paga con WLD",
+      },
+      geo: {
+        locationRequired: "Activa ubicación para encontrar personas cerca",
+        enableLocation: "Activar ubicación",
+        updatingLocation: "Actualizando tu ubicación...",
+        locationUpdated: "Ubicación actualizada",
+        country: "País",
+        countryLocked: "País bloqueado por {days} días más",
+        countryChangePremium: "Solo Premium puede cambiar de país",
+        travelMode: "Modo Viaje",
+        travelModeDesc: "Aparece en otra ciudad y haz match con personas de allá",
+        travelModeActive: "Actualmente viajando a {city}",
+        travelModePremium: "Función Premium",
+        selectDestination: "Selecciona destino",
+        activateTravel: "Activar Modo Viaje",
+        deactivateTravel: "Volver a casa",
+        distanceSetting: "Distancia de descubrimiento",
+        nearbyCount: "{count} personas dentro de {distance}km",
+        tooFar: "Muy lejos",
+        passport: "Pasaporte H Love",
+        passportDesc: "Premium puede desbloquear 1 país nuevo por año",
       },
       matches: {
         title: "Matches",
@@ -224,6 +305,7 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
         attending: "asistiendo",
         youHaveTicket: "Tienes un ticket",
         soldOut: "Agotado",
+        getTicket: "Obtener Ticket",
       },
       profile: {
         editProfile: "Editar perfil",
@@ -243,6 +325,13 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
         boostDesc: "Sé visto por 10x más personas por 30 minutos",
         logout: "Cerrar sesión",
         referral: "Invitar amigos",
+        travelMode: "Modo Viaje",
+        settings: "Ajustes",
+        location: "Ubicación",
+        showDistance: "Mostrar distancia a otros",
+        showOnline: "Mostrar estado en línea",
+        distanceRange: "Distancia de descubrimiento: {km}km",
+        currentLocation: "Actual: {city}, {country}",
       },
       chat: {
         startConvo: "¡Inicia la conversación!",
@@ -263,14 +352,10 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
         cancel: "Cancelar",
         confirm: "Confirmar",
         close: "Cerrar",
+        km: "km",
       },
     },
   };
-
-  type Translations = typeof translations.en;
-  type NestedKeys<T, P extends string = ""> = T extends object
-    ? { [K in keyof T]: NestedKeys<T[K], P extends "" ? `${K & string}` : `${P}.${K & string}`> }[keyof T]
-    : P;
 
   interface I18nContextType {
     lang: Lang;
@@ -328,7 +413,7 @@ import { createContext, useContext, useState, useCallback, type ReactNode } from
         onClick={() => setLang(lang === "en" ? "es" : "en")}
         className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/50 border border-border/30 text-xs font-medium hover:bg-muted transition-colors"
       >
-        <span className="text-sm">{lang === "en" ? "🇺🇸" : "🇪🇸"}</span>
+        <span className="text-sm">{lang === "en" ? "\u{1F1FA}\u{1F1F8}" : "\u{1F1EA}\u{1F1F8}"}</span>
         <span className="uppercase">{lang}</span>
       </button>
     );
