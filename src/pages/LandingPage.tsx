@@ -2,25 +2,20 @@ import { useState } from "react";
   import { motion, AnimatePresence } from "framer-motion";
   import { Shield, Heart, Sparkles, Users, CheckCircle } from "lucide-react";
   import { Button } from "@/components/ui/button";
-  import {
-    MiniKit,
-    VerificationLevel,
-  } from "@worldcoin/minikit-js";
+  import { MiniKit, VerificationLevel } from "@worldcoin/minikit-js";
 
   interface LandingPageProps {
-    onVerified: (userId: string, nullifierHash: string) => void;
+    onVerified: (walletAddress: string, nullifierHash: string, username: string | null) => void;
   }
 
   export default function LandingPage({ onVerified }: LandingPageProps) {
     const [isPending, setIsPending] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [step, setStep] = useState<string>("");
 
     const handleVerify = async () => {
       setIsPending(true);
       setError(null);
-
-      console.log("[Verify] === Starting verification ===");
-      console.log("[Verify] MiniKit.isInstalled():", MiniKit.isInstalled());
 
       if (!MiniKit.isInstalled()) {
         setError("Abre esta app dentro de World App");
@@ -28,50 +23,124 @@ import { useState } from "react";
         return;
       }
 
+      let walletAddress: string | null = null;
+      let username: string | null = null;
+
+      // Step 1: walletAuth — get wallet_address + username
       try {
-        console.log("[Verify] Calling MiniKit.commandsAsync.verify...");
+        setStep("Autenticando wallet...");
+        console.log("[Verify] Step 1: walletAuth");
+
+        const nonceRes = await fetch("/api/nonce");
+        if (!nonceRes.ok) throw new Error("No se pudo obtener nonce");
+        const { nonce } = await nonceRes.json();
+
+        const authRes = await MiniKit.commandsAsync.walletAuth({
+          nonce,
+          requestId: "hlove-auth-" + Date.now(),
+          expirationTime: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+          notBefore: new Date(Date.now() - 60 * 1000),
+          statement: "Autenticar wallet para H Love",
+        });
+
+        const authPayload = authRes?.finalPayload;
+        if (authPayload?.status === "error") {
+          console.warn("[Verify] walletAuth declined, trying MiniKit.user");
+        } else if (authPayload?.address) {
+          walletAddress = authPayload.address;
+          console.log("[Verify] walletAuth address:", walletAddress);
+
+          // Verify SIWE signature on backend
+          try {
+            const siweRes = await fetch("/api/walletVerify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ payload: authPayload, nonce }),
+            });
+            const siweData = await siweRes.json();
+            if (siweData.success) {
+              walletAddress = siweData.address || walletAddress;
+            }
+          } catch (e) {
+            console.warn("[Verify] SIWE verify error:", e);
+          }
+        }
+
+        // Get username from MiniKit.user
+        username = MiniKit.user?.username || null;
+        if (!walletAddress) {
+          walletAddress = MiniKit.user?.walletAddress || null;
+        }
+        console.log("[Verify] wallet:", walletAddress, "username:", username);
+
+        if (!walletAddress) {
+          setError("No se pudo obtener tu wallet. Intenta de nuevo.");
+          setIsPending(false);
+          return;
+        }
+      } catch (err) {
+        console.error("[Verify] walletAuth error:", err);
+        // Try to get from MiniKit.user as fallback
+        walletAddress = MiniKit.user?.walletAddress || null;
+        username = MiniKit.user?.username || null;
+        if (!walletAddress) {
+          setError("Error al autenticar wallet");
+          setIsPending(false);
+          return;
+        }
+      }
+
+      // Step 2: World ID verify — get nullifier_hash + proof
+      try {
+        setStep("Verificando humanidad...");
+        console.log("[Verify] Step 2: verify (Orb)");
+
         const verifyRes = await MiniKit.commandsAsync.verify({
           action: "verifica-que-eres-humano",
           verification_level: VerificationLevel.Orb,
+          signal: walletAddress || "",
         });
 
         const proof = verifyRes?.finalPayload;
-        console.log("[Verify] finalPayload:", JSON.stringify(proof));
+        console.log("[Verify] proof status:", proof?.status);
 
-        if (!proof) throw new Error("No se recibió proof");
-
-        if (proof.status === "error") {
+        if (!proof || proof.status === "error") {
           setError("Verificación cancelada o fallida");
           setIsPending(false);
           return;
         }
 
-        console.log("[Verify] Sending proof to /api/verify...");
+        // Step 3: Send to backend
+        setStep("Guardando...");
+        console.log("[Verify] Step 3: sending to backend");
+
         const res = await fetch("/api/verify", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ payload: proof }),
+          body: JSON.stringify({
+            payload: proof,
+            wallet_address: walletAddress,
+            username: username,
+          }),
         });
 
         const backend = await res.json();
-        console.log("[Verify] Backend response:", JSON.stringify(backend));
+        console.log("[Verify] Backend:", JSON.stringify(backend));
 
-        if (backend.success && backend.user_id) {
-          localStorage.setItem("hlove_user_id", backend.user_id);
+        if (backend.success && backend.wallet_address) {
+          localStorage.setItem("hlove_wallet", backend.wallet_address);
           localStorage.setItem("hlove_nullifier", backend.nullifier_hash);
-          onVerified(backend.user_id, backend.nullifier_hash);
-          console.log("[Verify] ✅ Verified! UUID:", backend.user_id);
-        } else if (backend.success && proof.nullifier_hash) {
-          localStorage.setItem("hlove_nullifier", proof.nullifier_hash);
-          setError("Verificado pero no se obtuvo ID. Intenta de nuevo.");
+          if (backend.username) localStorage.setItem("hlove_username", backend.username);
+          onVerified(backend.wallet_address, backend.nullifier_hash, backend.username || username);
         } else {
-          throw new Error(backend.error || "Backend rechazó la prueba");
+          throw new Error(backend.error || "Backend rechazó la verificación");
         }
       } catch (err) {
-        console.error("[Verify] Exception:", err);
+        console.error("[Verify] Error:", err);
         setError(err instanceof Error ? err.message : "Error inesperado");
       } finally {
         setIsPending(false);
+        setStep("");
       }
     };
 
@@ -155,11 +224,14 @@ import { useState } from "react";
               className="w-full h-14 text-lg font-semibold gradient-love border-0 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
             >
               {isPending ? (
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
-                  className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full"
-                />
+                <div className="flex items-center gap-3">
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                    className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full"
+                  />
+                  <span className="text-sm">{step || "Verificando..."}</span>
+                </div>
               ) : (
                 <>
                   <Shield className="w-5 h-5 mr-2" />
