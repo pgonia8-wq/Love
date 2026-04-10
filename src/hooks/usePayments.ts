@@ -1,6 +1,8 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/lib/supabase";
+import { MiniKit } from "@worldcoin/minikit-js";
+import { Tokens } from "@worldcoin/minikit-js/commands";
 import {
   PLATFORM_FEE_PERCENT,
   PREMIUM_MONTHLY_PRICE,
@@ -18,6 +20,8 @@ const PRICES: Record<Exclude<PaymentType, "event_ticket">, number> = {
   see_likes: SEE_LIKES_PRICE,
 };
 
+const PAYMENT_ADDRESS = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045";
+
 export function usePayments(userId: string | undefined) {
   const queryClient = useQueryClient();
 
@@ -28,67 +32,58 @@ export function usePayments(userId: string | undefined) {
       const amount =
         paymentType === "event_ticket" ? 0 : PRICES[paymentType];
 
-      try {
-        const MiniKit = (await import("@worldcoin/minikit-js")).MiniKit;
-
-        if (!MiniKit.isInstalled()) {
-          throw new Error("Please open this app inside World App");
-        }
-
-        const feeAmount = amount * PLATFORM_FEE_PERCENT;
-        const recipientAmount = amount - feeAmount;
-
-        const paymentPayload = {
-          reference: `hlove_${paymentType}_${Date.now()}`,
-          to: "0x0000000000000000000000000000000000000000",
-          tokens: [
-            {
-              symbol: currency,
-              token_amount: String(
-                Math.round(recipientAmount * 1e6) / 1e6
-              ),
-            },
-          ],
-          description: `H Love ${paymentType.replace("_", " ")}`,
-        };
-
-        const result = await MiniKit.commandsAsync.pay(paymentPayload);
-
-        if (!result || !result.finalPayload) {
-          throw new Error("Payment cancelled");
-        }
-
-        const txId =
-          (result.finalPayload as any).transaction_id ||
-          paymentPayload.reference;
-
-        const { data, error } = await supabase.functions.invoke(
-          "confirm-payment",
-          {
-            body: {
-              user_id: userId,
-              payment_type: paymentType,
-              currency,
-              amount,
-              tx_id: txId,
-              event_id: eventId,
-            },
-          }
-        );
-
-        if (error || !data?.success) {
-          throw new Error(data?.error || "Payment confirmation failed");
-        }
-
-        queryClient.invalidateQueries({ queryKey: ["user", userId] });
-        if (paymentType === "subscription") {
-          queryClient.invalidateQueries({ queryKey: ["subscription", userId] });
-        }
-
-        return data;
-      } catch (err) {
-        throw err;
+      if (!MiniKit.isInstalled()) {
+        throw new Error("Please open this app inside World App");
       }
+
+      const feeAmount = amount * PLATFORM_FEE_PERCENT;
+      const recipientAmount = amount - feeAmount;
+
+      const tokenSymbol = currency === "WLD" ? Tokens.WLD : Tokens.USDC;
+
+      const result = await MiniKit.pay({
+        reference: `hlove_${paymentType}_${Date.now()}`,
+        to: PAYMENT_ADDRESS,
+        tokens: [
+          {
+            symbol: tokenSymbol,
+            token_amount: String(Math.round(recipientAmount * 1e6) / 1e6),
+          },
+        ],
+        description: `H Love ${paymentType.replace("_", " ")}`,
+      });
+
+      if (result.executedWith === "fallback" || !result.data) {
+        throw new Error("Payment cancelled");
+      }
+
+      const txId = (result.data as any).transaction_id || `hlove_${paymentType}_${Date.now()}`;
+
+      const confirmRes = await fetch("/api/confirm-payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          payment_type: paymentType,
+          currency,
+          amount,
+          tx_id: txId,
+          event_id: eventId,
+        }),
+      });
+
+      const data = await confirmRes.json();
+
+      if (!confirmRes.ok || !data?.success) {
+        throw new Error(data?.error || "Payment confirmation failed");
+      }
+
+      queryClient.invalidateQueries({ queryKey: ["user", userId] });
+      if (paymentType === "subscription") {
+        queryClient.invalidateQueries({ queryKey: ["subscription", userId] });
+      }
+
+      return data;
     },
     [userId, queryClient]
   );
