@@ -3,13 +3,6 @@ import { supabase } from "@/lib/supabase";
 import { VERIFY_ACTION, WORLD_APP_ID } from "@/lib/constants";
 import type { User, Profile } from "@/types";
 
-interface MiniKitVerifyPayload {
-  merkle_root: string;
-  nullifier_hash: string;
-  proof: string;
-  verification_level: string;
-}
-
 interface AuthState {
   user: User | null;
   profile: Profile | null;
@@ -31,9 +24,12 @@ export function useAuth() {
     try {
       const storedUserId = localStorage.getItem("hlove_user_id");
       if (!storedUserId) {
+        console.log("[Auth] No stored session found");
         setState((prev) => ({ ...prev, isLoading: false }));
         return;
       }
+
+      console.log("[Auth] Found stored userId:", storedUserId);
 
       const { data: user, error: userError } = await supabase
         .from("users")
@@ -42,6 +38,7 @@ export function useAuth() {
         .single();
 
       if (userError || !user) {
+        console.log("[Auth] Stored user not found in DB, clearing session", userError);
         localStorage.removeItem("hlove_user_id");
         setState((prev) => ({ ...prev, isLoading: false }));
         return;
@@ -53,6 +50,8 @@ export function useAuth() {
         .eq("user_id", user.id)
         .single();
 
+      console.log("[Auth] Session restored for user:", user.id, "has profile:", !!profile);
+
       setState({
         user,
         profile,
@@ -60,7 +59,8 @@ export function useAuth() {
         isVerified: user.is_verified,
         error: null,
       });
-    } catch {
+    } catch (err) {
+      console.error("[Auth] Session check error:", err);
       setState((prev) => ({ ...prev, isLoading: false }));
     }
   }, []);
@@ -71,60 +71,89 @@ export function useAuth() {
 
   const verifyWithWorldId = useCallback(async () => {
     setState((prev) => ({ ...prev, isLoading: true, error: null }));
+    console.log("[Auth] Starting World ID verification...");
+    console.log("[Auth] Action:", VERIFY_ACTION);
+    console.log("[Auth] App ID:", WORLD_APP_ID);
 
     try {
-      const MiniKit = (await import("@worldcoin/minikit-js")).MiniKit;
+      const { MiniKit, VerificationLevel, MiniAppVerifyActionErrorPayload } = await import("@worldcoin/minikit-js");
+
+      console.log("[Auth] MiniKit imported successfully");
+      console.log("[Auth] MiniKit.isInstalled():", MiniKit.isInstalled());
 
       if (!MiniKit.isInstalled()) {
+        console.error("[Auth] MiniKit is NOT installed. User must open app inside World App.");
         setState((prev) => ({
           ...prev,
           isLoading: false,
-          error: "Please open this app inside World App",
+          error: "Please open this app inside World App to verify your identity",
         }));
         return false;
       }
+
+      console.log("[Auth] MiniKit is installed, sending verify command...");
 
       const verifyPayload = {
         action: VERIFY_ACTION,
-        verification_level: "orb",
+        verification_level: VerificationLevel.Orb,
       };
 
-      const minikit = await import("@worldcoin/minikit-js");
-      const result = await minikit.MiniKit.commandsAsync.verify(verifyPayload);
+      console.log("[Auth] Verify payload:", JSON.stringify(verifyPayload));
 
-      if (!result || !result.finalPayload) {
+      const { finalPayload } = await MiniKit.commandsAsync.verify(verifyPayload);
+
+      console.log("[Auth] Verify response received:", JSON.stringify(finalPayload));
+
+      if (finalPayload.status === "error") {
+        const errorPayload = finalPayload as MiniAppVerifyActionErrorPayload;
+        console.error("[Auth] Verification error from World App:", JSON.stringify(errorPayload));
         setState((prev) => ({
           ...prev,
           isLoading: false,
-          error: "Verification was cancelled",
+          error: `Verification error: ${errorPayload.error_code || "unknown"} - Please try again`,
         }));
         return false;
       }
 
-      const payload = result.finalPayload as unknown as MiniKitVerifyPayload;
+      console.log("[Auth] Proof received successfully, validating on backend...");
+      console.log("[Auth] merkle_root:", finalPayload.merkle_root);
+      console.log("[Auth] nullifier_hash:", finalPayload.nullifier_hash);
+      console.log("[Auth] verification_level:", finalPayload.verification_level);
 
-      const { data, error } = await supabase.functions.invoke(
-        "validate-orb-proof",
+      const verifyResponse = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/validate-orb-proof`,
         {
-          body: {
-            merkle_root: payload.merkle_root,
-            nullifier_hash: payload.nullifier_hash,
-            proof: payload.proof,
-            verification_level: payload.verification_level,
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+          },
+          body: JSON.stringify({
+            merkle_root: finalPayload.merkle_root,
+            nullifier_hash: finalPayload.nullifier_hash,
+            proof: finalPayload.proof,
+            verification_level: finalPayload.verification_level,
             action: VERIFY_ACTION,
             app_id: WORLD_APP_ID,
-          },
+          }),
         }
       );
 
-      if (error || !data?.success) {
+      const data = await verifyResponse.json();
+
+      console.log("[Auth] Backend validation response:", JSON.stringify(data));
+
+      if (!verifyResponse.ok || !data.success) {
+        console.error("[Auth] Backend validation failed:", data.error);
         setState((prev) => ({
           ...prev,
           isLoading: false,
-          error: data?.error || "Verification failed. Please try again.",
+          error: data.error || "Verification failed on server. Please try again.",
         }));
         return false;
       }
+
+      console.log("[Auth] User verified! ID:", data.user.id, "isNew:", data.isNewUser);
 
       localStorage.setItem("hlove_user_id", data.user.id);
 
@@ -133,6 +162,8 @@ export function useAuth() {
         .select("*")
         .eq("user_id", data.user.id)
         .single();
+
+      console.log("[Auth] Profile loaded:", !!profile);
 
       setState({
         user: data.user,
@@ -144,10 +175,12 @@ export function useAuth() {
 
       return true;
     } catch (err) {
+      console.error("[Auth] Verification exception:", err);
+      const errorMessage = err instanceof Error ? err.message : "Verification failed";
       setState((prev) => ({
         ...prev,
         isLoading: false,
-        error: err instanceof Error ? err.message : "Verification failed",
+        error: errorMessage,
       }));
       return false;
     }
@@ -180,6 +213,7 @@ export function useAuth() {
   );
 
   const logout = useCallback(() => {
+    console.log("[Auth] Logging out");
     localStorage.removeItem("hlove_user_id");
     setState({
       user: null,
